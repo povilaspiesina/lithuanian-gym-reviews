@@ -324,7 +324,10 @@ async function scrapePlace(page, club, placeUrl, maxReviews, sortPreference, kno
         await page.locator(reviewSelector()).first().waitFor({ timeout: 60000 });
       } else {
         await page.keyboard.press('Escape');
+        if (knownIds) throw new Error('Newest sort is unavailable; incremental refresh cannot verify new reviews');
       }
+    } else if (knownIds) {
+      throw new Error('Review sort control is unavailable; incremental refresh cannot verify new reviews');
     }
     let stagnant = 0;
     for (let step = 0; step < 1000; step++) {
