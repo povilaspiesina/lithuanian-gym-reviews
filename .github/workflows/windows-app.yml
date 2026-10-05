@@ -50,6 +50,8 @@ jobs:
           $browser = Join-Path $root 'resources/browsers/chromium-1243/chrome-win64/chrome.exe'
           if (!(Test-Path $backend)) { throw 'Bundled dashboard executable is missing' }
           if (!(Test-Path $browser)) { throw 'Bundled browser is missing' }
+          python scripts/check_seed.py (Join-Path $root 'resources/seed/reviews.sqlite3.gz')
+          if ($LASTEXITCODE -ne 0) { throw 'Starter archive failed' }
           $env:GYM_DATA_DIR = Join-Path $env:RUNNER_TEMP 'gym-review-smoke'
           $env:GYM_DIRECTORY_FILE = Join-Path $root 'resources/gyms_lt.json'
           $env:GYM_PLACES_FILE = Join-Path $root 'resources/verified_maps_places.json'

@@ -184,6 +184,7 @@ def filters(params):
     city = params.get("city", [""])[0]
     club_id = params.get("club_id", [""])[0]
     rating = params.get("rating", [""])[0]
+    comment = params.get("comment", ["all"])[0]
     query = params.get("q", [""])[0].strip()
     known_clubs = clubs()
     if chain and chain not in {c["chain"] for c in known_clubs}:
@@ -194,6 +195,8 @@ def filters(params):
         raise ValueError("unknown club")
     if rating and rating not in {"1", "2", "3", "4", "5"}:
         raise ValueError("rating must be 1–5")
+    if comment not in {"all", "written", "rating_only"}:
+        raise ValueError("invalid comment filter")
     selected = [c["id"] for c in known_clubs if
                 (not chain or c["chain"] == chain) and
                 (not city or c["locality"] == city) and
@@ -213,6 +216,10 @@ def filters(params):
     if rating:
         clauses.append("rating = ?")
         values.append(int(rating))
+    if comment == "written":
+        clauses.append("TRIM(text) != ''")
+    elif comment == "rating_only":
+        clauses.append("TRIM(text) = ''")
     if query:
         clauses.append("(text LIKE ? OR owner_reply_text LIKE ?)")
         escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -236,14 +243,72 @@ def stats(con, params):
     where, values = filters(params)
     summary = dict(con.execute(
         "SELECT COUNT(*) AS review_count, ROUND(AVG(rating), 2) AS average_rating, "
-        "SUM(CASE WHEN owner_reply_text != '' THEN 1 ELSE 0 END) AS replied_count "
+        "SUM(CASE WHEN owner_reply_text != '' THEN 1 ELSE 0 END) AS replied_count, "
+        "SUM(CASE WHEN TRIM(text) != '' THEN 1 ELSE 0 END) AS written_count, "
+        "SUM(CASE WHEN rating <= 2 THEN 1 ELSE 0 END) AS low_rating_count, "
+        "SUM(CASE WHEN rating <= 2 AND owner_reply_text != '' THEN 1 ELSE 0 END) AS low_rating_replied_count "
         "FROM reviews" + where, values,
     ).fetchone())
-    summary["replied_count"] = summary["replied_count"] or 0
+    for key in ("replied_count", "written_count", "low_rating_count", "low_rating_replied_count"):
+        summary[key] = summary[key] or 0
     summary["ratings"] = {str(i): 0 for i in range(1, 6)}
     for row in con.execute("SELECT rating, COUNT(*) AS n FROM reviews" + where + " GROUP BY rating", values):
         summary["ratings"][str(row["rating"])] = row["n"]
     return summary
+
+
+def chart_data(con, params):
+    """Aggregates over exactly the same rows as the list and CSV export."""
+    where, values = filters(params)
+    bounds = con.execute("SELECT MIN(published_at), MAX(published_at) FROM reviews" + where, values).fetchone()
+    first, last = bounds
+    if not first:
+        return {"grain": "month", "trend": [], "chains": [], "clubs": []}
+    span = (date.fromisoformat(last) - date.fromisoformat(first)).days
+    grain, length = ("day", 10) if span <= 62 else (("month", 7) if span <= 1096 else ("year", 4))
+    trend = [dict(row) for row in con.execute(
+        f"SELECT SUBSTR(published_at, 1, {length}) AS period, COUNT(*) AS count, "
+        "ROUND(AVG(rating), 2) AS average_rating FROM reviews" + where +
+        " GROUP BY period ORDER BY period", values,
+    )]
+    by_period = {row["period"]: row for row in trend}
+    cursor, finish = date.fromisoformat(first), date.fromisoformat(last)
+    trend = []
+    while cursor <= finish:
+        period = cursor.isoformat()[:length]
+        trend.append(by_period.get(period, {"period": period, "count": 0, "average_rating": None}))
+        if grain == "day":
+            cursor += timedelta(days=1)
+        elif grain == "month":
+            cursor = (cursor.replace(day=1) + timedelta(days=32)).replace(day=1)
+        else:
+            cursor = cursor.replace(year=cursor.year + 1, month=1, day=1)
+    known = {c["id"]: c for c in clubs()}
+    by_club = []
+    for row in con.execute(
+        "SELECT club_id, COUNT(*) AS count, SUM(rating) AS rating_sum, ROUND(AVG(rating), 2) AS average_rating, "
+        "SUM(CASE WHEN TRIM(text) != '' THEN 1 ELSE 0 END) AS written_count, "
+        "SUM(CASE WHEN rating <= 2 THEN 1 ELSE 0 END) AS low_rating_count "
+        "FROM reviews" + where + " GROUP BY club_id", values,
+    ):
+        item = dict(row)
+        item.update({key: known[row["club_id"]][key] for key in ("chain", "club_name", "locality")})
+        by_club.append(item)
+    by_club.sort(key=lambda x: (-x["count"], x["chain"], x["club_name"]))
+    by_chain = []
+    for chain in sorted({c["chain"] for c in known.values()}):
+        ids = [c["id"] for c in known.values() if c["chain"] == chain]
+        rows = [c for c in by_club if c["club_id"] in ids]
+        if not rows:
+            continue
+        count = sum(c["count"] for c in rows)
+        by_chain.append({
+            "chain": chain, "count": count,
+            "average_rating": round(sum(c["rating_sum"] for c in rows) / count, 2),
+            "written_count": sum(c["written_count"] for c in rows),
+            "low_rating_count": sum(c["low_rating_count"] for c in rows),
+        })
+    return {"grain": grain, "trend": trend, "chains": by_chain, "clubs": by_club}
 
 
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -256,11 +321,12 @@ form,.card,.review{background:white;border:1px solid #dce4e5;border-radius:12px;
 form{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px;align-items:end}
 label{display:grid;gap:5px;font-size:.8rem;font-weight:650}input,select,button{font:inherit;border:1px solid #b6c5c6;border-radius:7px;padding:9px;min-width:0}
 button,.button{background:#126c66;color:white;border:0;cursor:pointer;text-decoration:none;text-align:center;border-radius:7px;padding:10px;font:inherit}
-.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:20px 0}.metric b{font-size:1.7rem;display:block}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:20px 0}.metric b{font-size:1.7rem;display:block}
 .coverage-details{margin-bottom:20px}.coverage-details summary{cursor:pointer;font-weight:650}.coverage-details p{margin:10px 0 0}
 .card h2{margin:0 0 12px;font-size:1rem}.barrow{display:grid;grid-template-columns:36px 1fr 50px;gap:10px;align-items:center;margin:7px 0}.bar{height:12px;background:#e8eeed;border-radius:8px;overflow:hidden}.bar span{display:block;height:100%;background:#14a496}
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:12px}.chart{min-width:0}.chart-note{font-size:.79rem;color:#63757a;margin:0 0 12px}.plot{width:100%;height:auto;display:block}.axis{fill:#63757a;font:11px system-ui,sans-serif}.gridline{stroke:#e4ebea}.volume{fill:#14a496}.trend-line{fill:none;stroke:#b36500;stroke-width:3}.empty{color:#63757a}.compare{display:grid;grid-template-columns:minmax(90px,1fr) minmax(110px,2fr) 55px 55px;gap:9px;align-items:center;margin:10px 0;font-size:.87rem}.compare .bar{height:14px}.compare .value{text-align:right}.table-wrap{overflow:auto}table{border-collapse:collapse;width:100%;font-size:.87rem}th,td{padding:9px 12px;border-bottom:1px solid #e4ebea;text-align:right;white-space:nowrap}th:first-child,td:first-child{text-align:left}th button{background:none;border:0;color:#126c66;padding:0;font-size:inherit;font-weight:700}tbody tr:hover{background:#f5f9f8}.subtle{font-size:.78rem;color:#63757a}.summary{font-size:.85rem;color:#53666c;margin-top:6px}
 .top{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:22px 0 12px}.top h2{margin:0}.review{margin:10px 0}.review h3{margin:0 0 7px;font-size:1rem}.meta{color:#53666c;font-size:.85rem}.stars{color:#b36500;font-weight:700}.review p{white-space:pre-wrap;overflow-wrap:anywhere}.reply{border-left:3px solid #14a496;padding-left:12px;margin-top:12px;color:#36575a}.pager{display:flex;gap:12px;align-items:center;margin:16px 0 30px}.muted{color:#63757a}
-@media(max-width:600px){header,main{padding:18px}.top{align-items:flex-start;flex-direction:column}}
+@media(max-width:850px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:600px){header,main{padding:18px}.top{align-items:flex-start;flex-direction:column}}
 </style></head><body><header><h1>Lithuanian gym reviews</h1><p>Local review archive · Gym+ · Lemon Gym · SportGates</p></header>
 <main><form id="filters"><label>Period<select name="period" id="period"><option value="all">All time</option><option value="last_30_days">Last 30 days</option><option value="previous_month">Previous calendar month</option><option value="custom">Custom dates</option></select></label>
 <label>From<input type="date" name="start" id="start"></label><label>To<input type="date" name="end" id="end"></label>
@@ -268,27 +334,65 @@ button,.button{background:#126c66;color:white;border:0;cursor:pointer;text-decor
 <label>City<select name="city" id="city"><option value="">All cities</option></select></label>
 <label>Club<select name="club_id" id="club"><option value="">All clubs</option></select></label>
 <label>Stars<select name="rating"><option value="">All ratings</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
+<label>Written comment<select name="comment"><option value="all">All reviews</option><option value="written">With comment</option><option value="rating_only">Rating only</option></select></label>
 <label>Search review or reply<input name="q" type="search" placeholder="e.g. cleanliness"></label>
 <button type="submit">Apply filters</button></form>
-<div class="metrics"><div class="card metric">Reviews<b id="count">—</b></div><div class="card metric">Average rating<b id="average">—</b></div><div class="card metric">Owner replies<b id="replied">—</b></div><div class="card metric">Maps coverage<b id="coverage">—</b><span class="muted" id="coverage-note"></span></div></div>
+<div class="metrics"><div class="card metric">Reviews<b id="count">—</b></div><div class="card metric">Average rating<b id="average">—</b><span class="subtle">out of 5 stars</span></div><div class="card metric">Written comments<b id="written">—</b><span class="subtle" id="written-pct"></span></div><div class="card metric">1–2 star reviews<b id="low">—</b><span class="subtle" id="low-pct"></span></div><div class="card metric">Owner replies<b id="replied">—</b><span class="subtle" id="reply-pct"></span></div><div class="card metric">Replies to 1–2 ★<b id="low-reply">—</b><span class="subtle">of 1–2 star reviews</span></div><div class="card metric">Maps coverage<b id="coverage">—</b><span class="muted" id="coverage-note"></span></div></div>
 <details class="card coverage-details"><summary>Clubs with incomplete review history</summary><div id="coverage-list" class="muted"></div></details>
-<div class="card"><h2>Rating distribution</h2><div id="distribution"></div></div>
+<div class="charts"><section class="card chart"><h2>Rating distribution</h2><div id="distribution"></div></section><section class="card chart"><h2>Review volume over time</h2><p class="chart-note" id="trend-note"></p><div id="trend"></div></section><section class="card chart"><h2>Average rating over time</h2><p class="chart-note">Each point averages the reviews in that period.</p><div id="rating-trend"></div></section><section class="card chart"><h2>Compare chains</h2><p class="chart-note">Average stars and review count in the selected period.</p><div id="chains"></div></section></div>
+<section class="card" style="margin-top:12px"><h2>Compare clubs</h2><p class="chart-note">Click a column to sort. Small samples can give misleading averages.</p><div class="table-wrap"><table><thead><tr><th><button type="button" data-sort="name">Club</button></th><th><button type="button" data-sort="count">Reviews</button></th><th><button type="button" data-sort="average_rating">Avg ★</button></th><th><button type="button" data-sort="written_pct">With comment</button></th><th><button type="button" data-sort="low_pct">1–2 ★</button></th></tr></thead><tbody id="clubs-table"></tbody></table></div></section>
 <div class="top"><h2>Reviews</h2><a class="button" id="export" href="/export.csv">Export filtered CSV</a></div><div id="reviews"></div>
 <div class="pager"><button id="previous" type="button">Previous</button><span id="page">Page 1</span><button id="next" type="button">Next</button></div>
 <p class="muted">Reviews are saved locally. Check Maps coverage before treating a club's history as complete.</p></main>
 <script>
-const form=document.querySelector('#filters'),clubs=CLUBS,limit=50;let offset=0,total=0;
+const form=document.querySelector('#filters'),clubs=CLUBS,limit=50;let offset=0,total=0,sortKey='count',sortReverse=false,lastClubRows=[];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function options(el,values){for(const [value,label] of values){const o=document.createElement('option');o.value=value;o.textContent=label;el.append(o)}}
 options(document.querySelector('#chain'),[...new Set(clubs.map(c=>c.chain))].sort().map(x=>[x,x]));
 options(document.querySelector('#city'),[...new Set(clubs.map(c=>c.locality))].sort().map(x=>[x,x]));
 options(document.querySelector('#club'),clubs.map(c=>[c.id,`${c.chain} · ${c.club_name} · ${c.locality}`]));
 function params(){const p=new URLSearchParams(new FormData(form));if(p.get('period')!=='custom'){p.delete('start');p.delete('end')}for(const [k,v] of [...p])if(!v)p.delete(k);return p}
+const pct=(n,d)=>d?`${(100*n/d).toFixed(1)}%`:'—';
+function renderPlot(target,rows,metric){
+ const el=document.querySelector(target);if(!rows.length){el.innerHTML='<p class="empty">No reviews in this selection.</p>';return}
+ const w=480,h=190,left=32,right=14,top=15,bottom=30,plotW=w-left-right,plotH=h-top-bottom;
+ const max=metric==='count'?Math.max(1,...rows.map(x=>x.count)):5;
+ const x=i=>left+(rows.length===1?plotW/2:plotW*i/(rows.length-1));
+ const y=v=>top+plotH*(1-v/max);
+ const grid=[0,.5,1].map(f=>`<line class="gridline" x1="${left}" x2="${w-right}" y1="${y(max*f)}" y2="${y(max*f)}"/><text class="axis" x="${left-5}" y="${y(max*f)+4}" text-anchor="end">${metric==='count'?Math.round(max*f):(max*f).toFixed(1)}</text>`).join('');
+ let marks='';
+ if(metric==='count'){
+  const bw=Math.max(2,Math.min(28,plotW/rows.length*.75));
+  marks=rows.map((r,i)=>`<rect class="volume" x="${x(i)-bw/2}" y="${y(r.count)}" width="${bw}" height="${Math.max(0,top+plotH-y(r.count))}"><title>${esc(r.period)}: ${r.count} reviews</title></rect>`).join('');
+ }else{
+  let segment=[];const paths=[];
+  for(let i=0;i<=rows.length;i++){const r=rows[i];if(r&&r.average_rating!=null){segment.push(`${x(i)},${y(r.average_rating)}`)}else if(segment.length){paths.push(`<polyline class="trend-line" points="${segment.join(' ')}"/>`);segment=[]}}
+  marks=paths.join('')+rows.map((r,i)=>r.average_rating==null?'':`<circle cx="${x(i)}" cy="${y(r.average_rating)}" r="3.5" fill="#b36500"><title>${esc(r.period)}: ${r.average_rating} stars (${r.count} reviews)</title></circle>`).join('');
+ }
+ const tickIndexes=[...new Set([0,Math.floor((rows.length-1)/2),rows.length-1])];
+ const ticks=tickIndexes.map(i=>`<text class="axis" x="${x(i)}" y="${h-8}" text-anchor="middle">${esc(rows[i].period)}</text>`).join('');
+ el.innerHTML=`<svg class="plot" viewBox="0 0 ${w} ${h}" role="img" aria-label="${metric==='count'?'Review count':'Average rating'} by period">${grid}${marks}${ticks}</svg>`;
+}
+function renderClubTable(){
+ const rows=[...lastClubRows].sort((a,b)=>{
+  if(sortKey==='name')return `${a.chain} ${a.club_name}`.localeCompare(`${b.chain} ${b.club_name}`);
+  const va=sortKey==='written_pct'?a.written_count/a.count:sortKey==='low_pct'?a.low_rating_count/a.count:a[sortKey];
+  const vb=sortKey==='written_pct'?b.written_count/b.count:sortKey==='low_pct'?b.low_rating_count/b.count:b[sortKey];
+  return vb-va||b.count-a.count;
+ });
+ if(sortReverse)rows.reverse();
+ document.querySelector('#clubs-table').innerHTML=rows.length?rows.map(x=>`<tr><td>${esc(x.chain)} · ${esc(x.club_name)}<div class="subtle">${esc(x.locality)}</div></td><td>${x.count.toLocaleString()}</td><td>${x.average_rating.toFixed(2)}</td><td>${pct(x.written_count,x.count)}</td><td>${pct(x.low_rating_count,x.count)}</td></tr>`).join(''):'<tr><td colspan="5" class="empty">No clubs match.</td></tr>';
+}
+document.querySelectorAll('[data-sort]').forEach(b=>b.onclick=()=>{const next=b.dataset.sort;sortReverse=sortKey===next?!sortReverse:false;sortKey=next;renderClubTable()});
 async function load(){const p=params();p.set('offset',offset);const r=await fetch('/api/data?'+p);if(!r.ok){alert((await r.json()).error);return}const data=await r.json();total=data.stats.review_count;
-document.querySelector('#count').textContent=total.toLocaleString();document.querySelector('#average').textContent=data.stats.average_rating??'—';document.querySelector('#replied').textContent=data.stats.replied_count.toLocaleString();
+document.querySelector('#count').textContent=total.toLocaleString();document.querySelector('#average').textContent=data.stats.average_rating??'—';document.querySelector('#written').textContent=data.stats.written_count.toLocaleString();document.querySelector('#written-pct').textContent=pct(data.stats.written_count,total)+' of reviews';document.querySelector('#low').textContent=data.stats.low_rating_count.toLocaleString();document.querySelector('#low-pct').textContent=pct(data.stats.low_rating_count,total)+' of reviews';document.querySelector('#replied').textContent=data.stats.replied_count.toLocaleString();document.querySelector('#reply-pct').textContent=pct(data.stats.replied_count,total)+' of reviews';document.querySelector('#low-reply').textContent=pct(data.stats.low_rating_replied_count,data.stats.low_rating_count);
 const coverage=data.coverage, clubId=p.get('club_id');document.querySelector('#coverage').textContent=clubId&&coverage.clubs[clubId]?`${coverage.clubs[clubId].collected}/${coverage.clubs[clubId].displayed_review_count??'?'}`:`${coverage.complete}/${coverage.open}`;document.querySelector('#coverage-note').textContent=clubId&&coverage.clubs[clubId]?(coverage.clubs[clubId].complete?'Displayed reviews collected':'Incomplete or unverified'):`open clubs complete · ${coverage.attempted} attempted`;
 const incomplete=clubs.filter(c=>c.status==='open'&&!coverage.clubs[c.id]?.complete);document.querySelector('#coverage-list').innerHTML=incomplete.length?incomplete.map(c=>{const x=coverage.clubs[c.id];return `<p>${esc(c.chain)} · ${esc(c.club_name)} · ${esc(c.locality)}: ${x?`${x.collected}/${x.displayed_review_count??'?'}`:'not collected'}</p>`}).join(''):'<p>All open clubs match their displayed Maps review counts.</p>';
 document.querySelector('#distribution').innerHTML=[5,4,3,2,1].map(n=>`<div class="barrow"><span>${n} ★</span><div class="bar"><span style="width:${total?100*data.stats.ratings[n]/total:0}%"></span></div><span>${data.stats.ratings[n]}</span></div>`).join('');
+document.querySelector('#trend-note').textContent=`${{day:'Daily',month:'Monthly',year:'Yearly'}[data.charts.grain]} totals · Google Maps dates are estimated`;
+renderPlot('#trend',data.charts.trend,'count');renderPlot('#rating-trend',data.charts.trend,'average_rating');
+document.querySelector('#chains').innerHTML=data.charts.chains.length?data.charts.chains.map(x=>`<div class="compare"><b>${esc(x.chain)}</b><div class="bar"><span style="width:${100*x.average_rating/5}%"></span></div><span class="value">${x.average_rating.toFixed(2)} ★</span><span class="value">${x.count.toLocaleString()}</span></div>`).join(''):'<p class="empty">No reviews in this selection.</p>';
+lastClubRows=data.charts.clubs;renderClubTable();
 document.querySelector('#reviews').innerHTML=data.reviews.length?data.reviews.map(x=>{const c=clubs.find(c=>c.id===x.club_id);return `<article class="review"><h3>${esc(c.chain)} · ${esc(c.club_name)} <span class="stars">${'★'.repeat(x.rating)}</span></h3><div class="meta">${esc(c.locality)} · ${x.date_precision==='estimated'?'about ':''}${esc(x.published_at)}${x.published_label?' ('+esc(x.published_label)+')':''}${x.author?' · '+esc(x.author):''}${x.review_url?' · <a href="'+esc(x.review_url)+'" target="_blank" rel="noopener noreferrer">Source</a>':''}</div><p>${esc(x.text)||'<em>Rating only</em>'}</p>${x.owner_reply_text?'<div class="reply"><b>Owner reply</b>'+ (x.owner_reply_at?' · '+esc(x.owner_reply_at):'')+'<p>'+esc(x.owner_reply_text)+'</p></div>':''}</article>`}).join(''):'<p class="muted">No reviews match these filters.</p>';
 document.querySelector('#page').textContent=`Page ${Math.floor(offset/limit)+1} · ${total} results`;document.querySelector('#previous').disabled=offset===0;document.querySelector('#next').disabled=offset+limit>=total;
 const e=params();document.querySelector('#export').href='/export.csv?'+e;}
@@ -314,7 +418,8 @@ def make_handler(db_path):
                     if offset < 0:
                         raise ValueError("offset must be nonnegative")
                     with closing(connect(db_path)) as con:
-                        payload = {"stats": stats(con, params), "reviews": review_data(con, params, 50, offset)}
+                        payload = {"stats": stats(con, params), "charts": chart_data(con, params),
+                                   "reviews": review_data(con, params, 50, offset)}
                         imported_counts = dict(con.execute(
                             "SELECT club_id, COUNT(*) FROM reviews GROUP BY club_id"
                         ).fetchall())
@@ -367,6 +472,8 @@ def main():
     importer = commands.add_parser("import-csv", help="import full-history review CSV")
     importer.add_argument("path", type=Path)
     commands.add_parser("status", help="show imported review count")
+    review_ids = commands.add_parser("review-ids", help="print stored review IDs for one club")
+    review_ids.add_argument("club_id")
     club_status = commands.add_parser("count-club", help="show imported review count for one club")
     club_status.add_argument("club_id")
     club_export = commands.add_parser("export-club", help="save all stored reviews for one club as CSV")
@@ -384,6 +491,12 @@ def main():
         with closing(connect(args.db)) as con:
             count = con.execute("SELECT COUNT(*) FROM reviews").fetchone()[0]
         print(f"{count} reviews in {args.db}")
+    elif args.command == "review-ids":
+        if args.club_id not in {club["id"] for club in clubs()}:
+            parser.error("unknown club_id")
+        with closing(connect(args.db)) as con:
+            print(json.dumps([row[0] for row in con.execute(
+                "SELECT review_id FROM reviews WHERE club_id = ?", (args.club_id,))]))
     elif args.command == "count-club":
         with closing(connect(args.db)) as con:
             count = con.execute("SELECT COUNT(*) FROM reviews WHERE club_id = ?", (args.club_id,)).fetchone()[0]

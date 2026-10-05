@@ -2,6 +2,7 @@ const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const zlib = require('zlib');
 
 let mainWindow;
 let backend;
@@ -17,6 +18,23 @@ function dataDir() {
   const dir = path.join(app.getPath('userData'), 'data');
   fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+function ensureStarterArchive() {
+  const destination = dataDir();
+  const database = path.join(destination, 'reviews.sqlite3');
+  const seed = resource(path.join('seed', 'reviews.sqlite3.gz'));
+  if (fs.existsSync(database) || !fs.existsSync(seed)) return;
+  const temporary = database + '.tmp';
+  try {
+    fs.writeFileSync(temporary, zlib.gunzipSync(fs.readFileSync(seed)));
+    fs.renameSync(temporary, database);
+    const report = resource(path.join('seed', 'scrape-report.json'));
+    if (fs.existsSync(report)) fs.copyFileSync(report, path.join(destination, 'scrape-report.json'));
+  } catch (error) {
+    fs.rmSync(temporary, { force: true });
+    send('app-error', `Could not install starter archive: ${error.message}`);
+  }
 }
 
 function childEnv() {
@@ -91,7 +109,7 @@ function startCollector(mode) {
   const stopFile = path.join(dataDir(), 'stop-requested');
   fs.rmSync(stopFile, { force: true });
   const args = mode === 'login' ? ['login'] :
-    mode === 'refresh' ? ['run', '--all', '--retry'] : ['run', '--all'];
+    mode === 'refresh' ? ['run', '--all', '--retry', '--incremental'] : ['run', '--all'];
   const env = { ...childEnv(), ELECTRON_RUN_AS_NODE: '1', GYM_STOP_FILE: stopFile };
   collectorMode = mode;
   collector = spawn(process.execPath, [path.join(app.getAppPath(), 'maps_scraper.js'), ...args], {
@@ -151,6 +169,7 @@ ipcMain.handle('import-csv', async () => {
 
 app.whenReady().then(() => {
   createWindow();
+  ensureStarterArchive();
   startBackend();
 });
 app.on('window-all-closed', () => app.quit());

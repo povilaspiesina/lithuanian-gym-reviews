@@ -37,6 +37,7 @@ function args() {
     command, club: option('--club'), clubs: option('--clubs'), all: raw.includes('--all'),
     headless: raw.includes('--headless'),
     retry: raw.includes('--retry'),
+    incremental: raw.includes('--incremental'),
     max: Number(option('--max-reviews', '0')),
     sort: option('--sort'),
     lite: raw.includes('--lite'),
@@ -278,7 +279,17 @@ async function scrollReviewList(page) {
   });
 }
 
-async function scrapePlace(page, club, placeUrl, maxReviews, sortPreference) {
+function recordFreshCards(rows, collected, seen, knownIds, knownStreak = 0) {
+  for (const row of rows) {
+    if (seen.has(row.review_id)) continue;
+    seen.add(row.review_id);
+    collected.set(row.review_id, row);
+    knownStreak = knownIds.has(row.review_id) ? knownStreak + 1 : 0;
+  }
+  return knownStreak;
+}
+
+async function scrapePlace(page, club, placeUrl, maxReviews, sortPreference, knownIds = null) {
   await page.goto(placeUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await dismissConsent(page);
   const reviewControls = '[role="tab"]:has-text("Reviews"), [role="tab"]:has-text("Atsiliepimai"), button[jsaction*="moreReviews"]';
@@ -293,11 +304,13 @@ async function scrapePlace(page, club, placeUrl, maxReviews, sortPreference) {
   await clickReviews(page);
   await page.locator(reviewSelector()).first().waitFor({ timeout: 20000 });
   const collected = new Map();
+  const seen = new Set();
+  let knownStreak = 0;
   let crashed = false;
   let stopped = false;
   const sortButton = page.locator('button[aria-label="Sort reviews"], button[aria-label*="Rūšiuoti"]').first();
   const sortNames = { relevant: 'Most relevant', newest: 'Newest', highest: 'Highest rating', lowest: 'Lowest rating' };
-  const sorts = sortPreference ? [sortNames[sortPreference]] :
+  const sorts = knownIds ? ['Newest'] : sortPreference ? [sortNames[sortPreference]] :
     maxReviews > 0 ? ['Newest'] : ['Most relevant', 'Newest', 'Highest rating', 'Lowest rating'];
   for (const sort of sorts) {
     try {
@@ -317,24 +330,32 @@ async function scrapePlace(page, club, placeUrl, maxReviews, sortPreference) {
     for (let step = 0; step < 1000; step++) {
       if (stopRequested()) { stopped = true; break; }
       await expandVisibleReviews(page);
-      for (const row of await extractCards(page, club, placeUrl)) collected.set(row.review_id, row);
+      const visible = await extractCards(page, club, placeUrl);
+      if (knownIds) {
+        const fresh = visible.filter(row => !seen.has(row.review_id));
+        if (fresh.length) knownStreak = recordFreshCards(fresh, collected, seen, knownIds, knownStreak);
+      } else for (const row of visible) collected.set(row.review_id, row);
       duplicateSteps = collected.size === previousUnique ? duplicateSteps + 1 : 0;
       previousUnique = collected.size;
       if (step % 10 === 0 || duplicateSteps === 15) console.log(`${club.id} [${sort}]: ${collected.size} unique reviews`);
-      if ((expected && collected.size >= expected) || (maxReviews > 0 && collected.size >= maxReviews)) break;
+      if ((knownIds && knownStreak >= 30) || (!knownIds && expected && collected.size >= expected) || (maxReviews > 0 && collected.size >= maxReviews)) break;
       if (sort !== 'Most relevant' && duplicateSteps >= 15) break;
       const beforeCards = await page.locator(reviewSelector()).count();
       const scroll = await scrollReviewList(page);
       if (!scroll) break;
       await page.waitForFunction(previous => document.querySelectorAll('.jftiEf[data-review-id]').length > previous,
         beforeCards, { timeout: 6000 }).catch(() => {});
-      for (const row of await extractCards(page, club, placeUrl)) collected.set(row.review_id, row);
+      const afterScroll = await extractCards(page, club, placeUrl);
+      if (knownIds) {
+        const fresh = afterScroll.filter(row => !seen.has(row.review_id));
+        if (fresh.length) knownStreak = recordFreshCards(fresh, collected, seen, knownIds, knownStreak);
+      } else for (const row of afterScroll) collected.set(row.review_id, row);
       const afterCards = await page.locator(reviewSelector()).count();
       stagnant = afterCards === beforeCards ? stagnant + 1 : 0;
       if (stagnant > 0) console.log(`${club.id} [${sort}]: no new cards (${stagnant}), ${afterCards} cards, scroll ${scroll.top}/${scroll.height}`);
       if (stagnant >= 5) break;
     }
-    if (stopped || (expected && collected.size >= expected) || (maxReviews > 0 && collected.size >= maxReviews)) break;
+    if (stopped || (knownIds && knownStreak >= 30) || (!knownIds && expected && collected.size >= expected) || (maxReviews > 0 && collected.size >= maxReviews)) break;
     } catch (error) {
       console.warn(`${club.id} [${sort}]: ${error.message}; retaining ${collected.size} reviews collected so far`);
       if (/crash|has been closed|Target closed|Browser closed/i.test(error.message)) {
@@ -365,7 +386,7 @@ async function main() {
     return;
   }
   if (!['login', 'run'].includes(a.command)) {
-    console.log('Usage: node maps_scraper.js login | status | run --club CLUB_ID | run --clubs ID1,ID2 [--sort newest] [--restart-every 0] | run --all');
+    console.log('Usage: node maps_scraper.js login | status | run --club CLUB_ID | run --clubs ID1,ID2 [--sort newest] [--restart-every 0] | run --all [--retry] [--incremental]');
     process.exit(a.command === 'help' ? 0 : 1);
   }
   const requestedIds = new Set(a.clubs?.split(',').filter(Boolean) || (a.club ? [a.club] : []));
@@ -416,7 +437,14 @@ async function main() {
       try {
         const placeUrl = await resolvePlace(page, club, matches, rl);
         if (!placeUrl) continue;
-        const { rows, expected, crashed, stopped } = await scrapePlace(page, club, placeUrl, a.max, a.sort);
+        let knownIds = null;
+        if (a.incremental && previous?.complete) {
+          const result = reviewApp(['review-ids', club.id]);
+          if (result.status !== 0) throw new Error(result.error?.message || result.stderr || result.stdout);
+          knownIds = new Set(JSON.parse(result.stdout));
+          if (!knownIds.size) knownIds = null;
+        }
+        const { rows, expected, crashed, stopped } = await scrapePlace(page, club, placeUrl, a.max, a.sort, knownIds);
         if (!rows.length && expected !== 0 && !stopped) throw new Error('No review cards were parsed');
         let stored;
         if (rows.length) {
@@ -468,4 +496,4 @@ async function main() {
 }
 
 if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });
-module.exports = { dateFromLabel, csv };
+module.exports = { dateFromLabel, csv, recordFreshCards };
