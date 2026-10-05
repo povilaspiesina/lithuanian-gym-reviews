@@ -1,0 +1,58 @@
+name: Build Windows app
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install app dependencies
+        run: npm ci
+      - name: Bundle Chromium
+        shell: pwsh
+        run: |
+          $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path (Get-Location) 'bundle-browsers'
+          npx playwright install chromium
+      - name: Build dashboard executable
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip pyinstaller
+          python -m PyInstaller --noconfirm --clean --onefile --name review_app --add-data 'gyms_lt.json;.' review_app.py
+      - name: Test source
+        shell: pwsh
+        run: |
+          npm test
+          python -m unittest -q test_review_app.py
+      - name: Build installer and zip
+        run: npm run dist:win
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Lithuanian-Gym-Reviews-Windows
+          path: |
+            release/*.exe
+            release/*.zip
+          if-no-files-found: error
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.exe
+            release/*.zip
