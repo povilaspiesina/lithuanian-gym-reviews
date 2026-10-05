@@ -315,7 +315,15 @@ def make_handler(db_path):
                         raise ValueError("offset must be nonnegative")
                     with closing(connect(db_path)) as con:
                         payload = {"stats": stats(con, params), "reviews": review_data(con, params, 50, offset)}
+                        imported_counts = dict(con.execute(
+                            "SELECT club_id, COUNT(*) FROM reviews GROUP BY club_id"
+                        ).fetchall())
                     report = json.loads(REPORT.read_text(encoding="utf-8")) if REPORT.exists() else {}
+                    for club_id, count in imported_counts.items():
+                        report.setdefault(club_id, {
+                            "collected": count, "displayed_review_count": None,
+                            "complete": False, "source": "imported CSV",
+                        })
                     payload["coverage"] = {
                         "open": sum(c["status"] == "open" for c in clubs()),
                         "attempted": len(report),
