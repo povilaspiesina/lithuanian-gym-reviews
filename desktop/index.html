@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; frame-src http://127.0.0.1:*">
+  <title>Lithuanian Gym Reviews</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="renderer.js"></script>
+</head>
+<body>
+  <header>
+    <div class="title"><b>Lithuanian Gym Reviews</b><span id="status">Starting local dashboard…</span></div>
+    <div class="actions">
+      <button id="collect" disabled>Collect missing</button>
+      <button id="refresh" disabled>Refresh all</button>
+      <button id="login" disabled>Maps sign-in</button>
+      <button id="finish-login" hidden>Finish sign-in</button>
+      <button id="stop" hidden>Stop after this club</button>
+      <button id="import" disabled>Import CSV</button>
+      <button id="folder" disabled>Data folder</button>
+    </div>
+  </header>
+  <section id="activity" hidden><b>Collector activity</b><pre id="log"></pre></section>
+  <main><div id="loading">Starting the local dashboard…</div><iframe id="dashboard" title="Review dashboard" hidden></iframe></main>
+</body>
+</html>

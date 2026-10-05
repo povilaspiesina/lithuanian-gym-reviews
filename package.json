@@ -1,0 +1,45 @@
+{
+  "name": "lithuanian-gym-reviews",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local Lithuanian gym review collector and dashboard",
+  "main": "desktop/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test_maps_scraper.js",
+    "dist:win": "electron-builder --win nsis zip --x64"
+  },
+  "dependencies": {
+    "playwright": "1.63.0"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "lt.gymreviews.desktop",
+    "productName": "Lithuanian Gym Reviews",
+    "directories": { "output": "release" },
+    "files": [
+      "desktop/**/*",
+      "maps_scraper.js",
+      "package.json",
+      "node_modules/playwright/**/*",
+      "node_modules/playwright-core/**/*"
+    ],
+    "extraResources": [
+      { "from": "dist/review_app.exe", "to": "backend/review_app.exe" },
+      { "from": "bundle-browsers", "to": "browsers" },
+      { "from": "gyms_lt.json", "to": "gyms_lt.json" },
+      { "from": "verified_maps_places.json", "to": "verified_maps_places.json" }
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "zip", "arch": ["x64"] }
+      ],
+      "artifactName": "Lithuanian-Gym-Reviews-${version}-${arch}.${ext}"
+    },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
+  }
+}
