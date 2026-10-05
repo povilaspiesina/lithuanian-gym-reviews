@@ -27,7 +27,7 @@ jobs:
         shell: pwsh
         run: |
           $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path (Get-Location) 'bundle-browsers'
-          npx playwright install chromium
+          npx playwright install chromium --no-shell
       - name: Build dashboard executable
         shell: pwsh
         run: |
