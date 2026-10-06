@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, safeStorage } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -9,6 +9,18 @@ let backend;
 let collector;
 let collectorMode = '';
 let dashboardUrl = '';
+const collectorSizes = { compact: '1050,720', medium: '1400,900', large: '1800,1050' };
+
+function settingsFile() { return path.join(app.getPath('userData'), 'settings.json'); }
+function settings() {
+  try { return JSON.parse(fs.readFileSync(settingsFile(), 'utf8')); } catch { return {}; }
+}
+function saveSettings(value) { fs.writeFileSync(settingsFile(), JSON.stringify({ ...settings(), ...value }, null, 2)); }
+function tokenFile() { return path.join(app.getPath('userData'), 'hf-token.enc'); }
+function hfToken() {
+  try { return safeStorage.decryptString(fs.readFileSync(tokenFile())); } catch { return ''; }
+}
+function signedInOnce() { return Boolean(settings().mapsSignInConfirmed); }
 
 function resource(name) {
   return path.join(app.isPackaged ? process.resourcesPath : path.join(__dirname, '..'), name);
@@ -43,6 +55,8 @@ function childEnv() {
     GYM_DATA_DIR: dataDir(),
     GYM_DIRECTORY_FILE: resource('gyms_lt.json'),
     GYM_PLACES_FILE: resource('verified_maps_places.json'),
+    GYM_BROWSER_SIZE: collectorSizes[settings().collectorSize] || collectorSizes.medium,
+    HF_TOKEN: hfToken(),
   };
   if (app.isPackaged) {
     env.GYM_REVIEW_APP_EXE = resource(path.join('backend', 'review_app.exe'));
@@ -81,9 +95,14 @@ function createWindow() {
 
 function startBackend() {
   const command = backendCommand(['serve', '--port', '0']);
-  backend = spawn(command.executable, command.args, { env: childEnv(), windowsHide: true });
+  const previous = backend;
+  const child = spawn(command.executable, command.args, { env: childEnv(), windowsHide: true });
+  backend = child;
+  dashboardUrl = '';
+  if (previous) previous.kill();
   let buffer = '';
-  backend.stdout.on('data', chunk => {
+  child.stdout.on('data', chunk => {
+    if (backend !== child) return;
     buffer += chunk.toString();
     for (;;) {
       const newline = buffer.indexOf('\n');
@@ -93,24 +112,39 @@ function startBackend() {
       if (line.startsWith('SERVER_URL=')) {
         dashboardUrl = line.slice('SERVER_URL='.length);
         send('dashboard-ready', dashboardUrl);
+        refreshDataSummary();
       } else if (line) send('app-log', line);
     }
   });
-  backend.stderr.on('data', chunk => send('app-log', chunk.toString().trim()));
-  backend.on('error', error => send('app-error', `Dashboard failed to start: ${error.message}`));
-  backend.on('exit', code => {
+  child.stderr.on('data', chunk => send('app-log', chunk.toString().trim()));
+  child.on('error', error => send('app-error', `Dashboard failed to start: ${error.message}`));
+  child.on('exit', code => {
+    if (backend !== child) return;
     dashboardUrl = '';
     if (mainWindow && !mainWindow.isDestroyed()) send('app-error', `Dashboard stopped (exit ${code}). Restart the app.`);
   });
 }
 
+async function refreshDataSummary() {
+  if (!dashboardUrl) return;
+  try {
+    const response = await fetch(dashboardUrl + '/api/status');
+    if (!response.ok) return;
+    send('data-summary', await response.json());
+  } catch { /* The backend may still be starting or shutting down. */ }
+}
+
 function startCollector(mode) {
   if (collector) return { ok: false, message: 'A collection or sign-in is already running.' };
+  if (mode !== 'login' && !signedInOnce()) {
+    return { ok: false, needsSignIn: true, message: 'Sign in to Google Maps before collecting.' };
+  }
   const stopFile = path.join(dataDir(), 'stop-requested');
   fs.rmSync(stopFile, { force: true });
   const args = mode === 'login' ? ['login'] :
     mode === 'refresh' ? ['run', '--all', '--retry', '--incremental'] : ['run', '--all'];
   const env = { ...childEnv(), ELECTRON_RUN_AS_NODE: '1', GYM_STOP_FILE: stopFile };
+  delete env.HF_TOKEN;
   collectorMode = mode;
   collector = spawn(process.execPath, [path.join(app.getAppPath(), 'maps_scraper.js'), ...args], {
     env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
@@ -126,6 +160,7 @@ function startCollector(mode) {
     fs.rmSync(stopFile, { force: true });
     send('collector-status', { running: false, mode: '' });
     send('reload-dashboard');
+    refreshDataSummary();
   });
   return { ok: true };
 }
@@ -137,8 +172,30 @@ ipcMain.handle('collector-start', (_event, mode) => {
 });
 ipcMain.handle('collector-finish-login', () => {
   if (collectorMode !== 'login' || !collector) return { ok: false };
+  saveSettings({ mapsSignInConfirmed: true });
   collector.stdin.write('\n');
   return { ok: true };
+});
+ipcMain.handle('setup-status', () => ({ needsSignIn: !signedInOnce(), tokenConfigured: Boolean(hfToken()),
+  collectorSize: settings().collectorSize || 'medium' }));
+ipcMain.handle('collector-size', (_event, size) => {
+  if (!collectorSizes[size]) return { ok: false, message: 'Invalid collector size.' };
+  saveSettings({ collectorSize: size });
+  return { ok: true };
+});
+ipcMain.handle('hf-set-token', (_event, token) => {
+  if (collector) return { ok: false, message: 'Wait until collection finishes before changing the token.' };
+  if (typeof token !== 'string' || token.length > 300) return { ok: false, message: 'Invalid token.' };
+  if (token && !/^hf_[A-Za-z0-9_-]+$/.test(token)) return { ok: false, message: 'Use a Hugging Face token beginning with hf_.' };
+  if (token && !safeStorage.isEncryptionAvailable()) return { ok: false, message: 'Secure token storage is unavailable on this computer.' };
+  try {
+    if (token) fs.writeFileSync(tokenFile(), safeStorage.encryptString(token), { mode: 0o600 });
+    else fs.rmSync(tokenFile(), { force: true });
+    startBackend();
+    return { ok: true, message: token ? 'Token saved securely.' : 'Token removed.' };
+  } catch (error) {
+    return { ok: false, message: `Could not save token: ${error.message}` };
+  }
 });
 ipcMain.handle('collector-stop', () => {
   if (!collector || collectorMode === 'login') return { ok: false };
@@ -162,6 +219,7 @@ ipcMain.handle('import-csv', async () => {
     child.on('error', error => resolve({ ok: false, message: error.message }));
     child.on('exit', code => {
       if (code === 0) send('reload-dashboard');
+      if (code === 0) refreshDataSummary();
       resolve({ ok: code === 0, message: output.trim() });
     });
   });

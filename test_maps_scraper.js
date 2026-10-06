@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { dateFromLabel, csv, recordFreshCards } = require('./maps_scraper');
+const { dateFromLabel, csv, recordFreshCards, gotoMaps } = require('./maps_scraper');
 
 test('relative review dates are marked estimated', () => {
   assert.deepEqual(dateFromLabel('2 weeks ago', new Date('2026-10-01T12:00:00Z')),
@@ -27,4 +27,14 @@ test('incremental refresh stops after a run of existing reviews', () => {
   assert.equal(collected.size, 4);
   streak = recordFreshCards([{ review_id: 'later' }], collected, seen, known, streak);
   assert.equal(streak, 0);
+});
+
+test('Maps navigation retries one transient timeout', async () => {
+  let attempts = 0;
+  const page = {
+    goto: async () => { if (++attempts === 1) throw new Error('Timeout 45000ms exceeded'); },
+    waitForTimeout: async () => {},
+  };
+  await gotoMaps(page, 'https://www.google.com/maps/');
+  assert.equal(attempts, 2);
 });

@@ -32,7 +32,7 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip pyinstaller
-          python -m PyInstaller --noconfirm --clean --onefile --name review_app --add-data 'gyms_lt.json;.' review_app.py
+          python -m PyInstaller --noconfirm --clean --onefile --name review_app --add-data 'gyms_lt.json;.' --add-data 'dashboard;dashboard' review_app.py
       - name: Test source
         shell: pwsh
         run: |
@@ -58,6 +58,8 @@ jobs:
           $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $root 'resources/browsers'
           & $backend status
           if ($LASTEXITCODE -ne 0) { throw 'Bundled dashboard failed' }
+          & $backend self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Bundled dashboard assets failed' }
           $env:ELECTRON_RUN_AS_NODE = '1'
           & (Join-Path $root 'Lithuanian Gym Reviews.exe') (Join-Path $root 'resources/app.asar/maps_scraper.js') status
           if ($LASTEXITCODE -ne 0) { throw 'Bundled collector failed' }

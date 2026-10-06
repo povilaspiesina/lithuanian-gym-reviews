@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Lithuanian gym reviews</title>
+  <link rel="stylesheet" href="/app.css">
+  <script id="club-directory" type="application/json">CLUBS_JSON</script>
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <header class="page-header">
+    <div><h1>Lithuanian gym reviews</h1><p>Gym+ · Lemon Gym · SportGates</p></div>
+    <nav aria-label="Dashboard sections">
+      <button type="button" class="nav-active" data-view="overview">Overview</button>
+      <button type="button" data-view="reviews">Reviews &amp; AI</button>
+    </nav>
+  </header>
+  <main>
+    <section id="overview-view" class="view">
+      <div class="section-head"><div><h2>Overview</h2><p>Compare ratings, volume, replies and coverage.</p></div><span class="updated" id="overview-updated"></span></div>
+      <form id="overview-filters" class="filters"></form>
+      <div class="metrics">
+        <div class="card metric">Reviews<b id="count">—</b></div>
+        <div class="card metric">Average rating<b id="average">—</b><small>out of 5</small></div>
+        <div class="card metric">Written comments<b id="written">—</b><small id="written-pct"></small></div>
+        <div class="card metric">1–2 star reviews<b id="low">—</b><small id="low-pct"></small></div>
+        <div class="card metric">Owner replies<b id="replied">—</b><small id="reply-pct"></small></div>
+        <div class="card metric">Replies to 1–2 ★<b id="low-reply">—</b><small>of 1–2 star reviews</small></div>
+        <div class="card metric">Clubs complete<b id="coverage">—</b><small id="coverage-note"></small></div>
+        <div class="card metric">Known reviews missing<b id="missing">—</b><small id="missing-note"></small></div>
+      </div>
+      <details class="card coverage-details"><summary>Coverage by club</summary><div id="coverage-list"></div></details>
+      <div class="charts">
+        <section class="card chart"><div class="card-head"><h3>Rating distribution</h3><a data-export="distribution" class="export" href="#">Export CSV</a></div><p class="hint">Click a rating to filter the overview.</p><div id="distribution"></div></section>
+        <section class="card chart"><div class="card-head"><h3>Review volume over time</h3><a data-export="volume" class="export" href="#">Export CSV</a></div><p class="hint" id="trend-note"></p><div id="trend"></div></section>
+        <section class="card chart"><div class="card-head"><h3>Average rating over time</h3><a data-export="rating_trend" class="export" href="#">Export CSV</a></div><p class="hint">Hover a point for its period and review count.</p><div id="rating-trend"></div></section>
+        <section class="card chart"><div class="card-head"><h3>Compare chains</h3><a data-export="chains" class="export" href="#">Export CSV</a></div><p class="hint">Click a chain to filter the overview.</p><div id="chains"></div></section>
+      </div>
+      <section class="card club-card"><div class="card-head"><h3>Compare clubs</h3><a data-export="clubs" class="export" href="#">Export CSV</a></div><p class="hint">Click a heading to sort. Review counts show the sample size behind each average.</p>
+        <div class="table-wrap"><table><thead><tr><th><button type="button" data-sort="name">Club <span class="sort-arrow"></span></button></th><th><button type="button" data-sort="count">Reviews <span class="sort-arrow"></span></button></th><th><button type="button" data-sort="average_rating">Avg ★ <span class="sort-arrow"></span></button></th><th><button type="button" data-sort="written_pct">With comment <span class="sort-arrow"></span></button></th><th><button type="button" data-sort="low_pct">1–2 ★ <span class="sort-arrow"></span></button></th></tr></thead><tbody id="clubs-table"></tbody></table></div>
+      </section>
+    </section>
+    <section id="reviews-view" class="view" hidden>
+      <div class="section-head"><div><h2>Reviews &amp; AI</h2><p>Read comments, owner replies, and ask questions about a sample.</p></div><span class="updated" id="reviews-updated"></span></div>
+      <form id="review-filters" class="filters"></form>
+      <section class="card ai-card"><div class="card-head"><h3>Hugging Face analysis</h3><span class="hint">Selected review text is sent only when you click Analyze. Requests may use your Hugging Face credits.</span></div>
+        <div class="ai-controls"><label>Model ID<input id="ai-model" value="openai/gpt-oss-120b:cheapest" spellcheck="false"></label><label>Analysis<select id="ai-mode"><option value="issues">Main issues (1–3 ★)</option><option value="summary">Review summary</option><option value="question">Custom question</option></select></label></div>
+        <label>Question<textarea id="ai-question" rows="2">Summarize the main recurring issues. Include concrete examples with review IDs.</textarea></label>
+        <div class="ai-actions"><button id="ai-run" type="button" class="primary">Analyze selected reviews</button><span id="ai-status" class="hint">Use “Hugging Face token” in the desktop toolbar to connect your account.</span></div>
+        <div id="ai-result" class="ai-result" hidden></div>
+      </section>
+      <div class="card-head review-head"><h3>Reviews <span id="review-count" class="muted"></span></h3><a class="export" id="reviews-export" href="/export.csv">Export filtered reviews CSV</a></div>
+      <div id="reviews"></div>
+      <div class="pager"><button id="previous" type="button">Previous</button><span id="page">Page 1</span><button id="next" type="button">Next</button></div>
+    </section>
+  </main>
+  <div id="tooltip" role="status" hidden></div>
+</body>
+</html>

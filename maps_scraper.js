@@ -99,9 +99,11 @@ async function launch(headless, lite = false) {
       if (/^(Session|Tabs)_/.test(name)) fs.rmSync(path.join(sessions, name));
     }
   }
+  const size = /^\d{3,4},\d{3,4}$/.test(process.env.GYM_BROWSER_SIZE || '') ? process.env.GYM_BROWSER_SIZE : '1400,900';
   const context = await chromium.launchPersistentContext(PROFILE, {
-    executablePath: CHROME, headless, locale: 'en-US', viewport: { width: 1400, height: 900 },
+    executablePath: CHROME, headless, locale: 'en-US', viewport: null,
     args: ['--no-first-run', '--no-default-browser-check', '--disable-session-crashed-bubble',
+      `--window-size=${size}`,
       ...(lite ? ['--disable-gpu', '--disable-dev-shm-usage'] : [])],
   });
   if (lite) await context.route('**/*', route =>
@@ -119,7 +121,7 @@ async function resolvePlace(page, club, matches, rl) {
   if (matches[club.id]) return matches[club.id];
   if (club.google_place_id) {
     const url = searchUrl(club) + '&query_place_id=' + encodeURIComponent(club.google_place_id);
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await gotoMaps(page, url);
     await dismissConsent(page);
     await page.waitForTimeout(1500);
     const address = await page.locator('[data-item-id="address"]').first().innerText().catch(() => '');
@@ -131,7 +133,7 @@ async function resolvePlace(page, club, matches, rl) {
     console.log('Using chain-published Google place ID:', club.id, club.google_place_id);
     return url;
   }
-  await page.goto(searchUrl(club), { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await gotoMaps(page, searchUrl(club));
   await dismissConsent(page);
   await page.waitForFunction(
     () => location.pathname.includes('/maps/place/') || !!document.querySelector('[role="article"]'),
@@ -185,7 +187,7 @@ async function resolvePlace(page, club, matches, rl) {
 
 async function clickReviews(page) {
   const selectors = [
-    'button[jsaction*="moreReviews"]',
+    'button[jsaction*="reviewChart.moreReviews"]',
     '[role="tab"]:has-text("Reviews")',
     '[role="tab"]:has-text("Atsiliepimai")',
     'button:has-text("reviews")',
@@ -194,7 +196,7 @@ async function clickReviews(page) {
   for (const selector of selectors) {
     const locator = page.locator(selector).first();
     if (await locator.isVisible().catch(() => false)) {
-      await locator.click({ timeout: 10000 });
+      await locator.click({ timeout: 10000, noWaitAfter: true });
       return;
     }
   }
@@ -241,13 +243,15 @@ async function extractCards(page, club, placeUrl) {
   const raw = await page.locator(reviewSelector()).evaluateAll(cards => cards.map(card => {
     const one = selector => card.querySelector(selector);
     const text = selector => one(selector)?.innerText?.trim() || '';
+    const reviewText = [...card.querySelectorAll('.wiI7pd, .MyEned')]
+      .find(node => !node.closest('.CDe7pd'))?.innerText?.trim() || '';
     const ratingLabel = one('.kvMYJc, [role="img"][aria-label*="star"], [role="img"][aria-label*="žvaig"]')?.getAttribute('aria-label') || '';
     return {
       review_id: card.getAttribute('data-review-id') || one('[data-review-id]')?.getAttribute('data-review-id') || '',
       author: text('.d4r55, .WNxzHc'),
       rating_label: ratingLabel,
       published_label: text('.rsqaWe, .xRkPPb'),
-      text: text('.wiI7pd, .MyEned'),
+      text: reviewText,
       owner_reply_text: text('.CDe7pd .wiI7pd, .CDe7pd .MyEned'),
       owner_reply_at: text('.CDe7pd .rsqaWe'),
     };
@@ -263,6 +267,19 @@ async function extractCards(page, club, placeUrl) {
       owner_reply_at: dateFromLabel(item.owner_reply_at).date,
     };
   }).filter(item => item.review_id && item.rating >= 1 && item.rating <= 5 && item.published_at);
+}
+
+async function gotoMaps(page, url) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+      return;
+    } catch (error) {
+      if (attempt || !/Timeout|net::ERR_/i.test(error.message)) throw error;
+      console.warn('Maps navigation stalled; retrying once');
+      await page.waitForTimeout(1500);
+    }
+  }
 }
 
 async function scrollReviewList(page) {
@@ -290,7 +307,7 @@ function recordFreshCards(rows, collected, seen, knownIds, knownStreak = 0) {
 }
 
 async function scrapePlace(page, club, placeUrl, maxReviews, sortPreference, knownIds = null) {
-  await page.goto(placeUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await gotoMaps(page, placeUrl);
   await dismissConsent(page);
   const reviewControls = '[role="tab"]:has-text("Reviews"), [role="tab"]:has-text("Atsiliepimai"), button[jsaction*="moreReviews"]';
   await page.locator(reviewControls).first().waitFor({ timeout: 20000 }).catch(() => {});
@@ -308,7 +325,7 @@ async function scrapePlace(page, club, placeUrl, maxReviews, sortPreference, kno
   let knownStreak = 0;
   let crashed = false;
   let stopped = false;
-  const sortButton = page.locator('button[aria-label="Sort reviews"], button[aria-label*="Rūšiuoti"]').first();
+  const sortButton = page.getByRole('button', { name: /Sort reviews|^Sort$|Rūšiuoti atsiliepimus|Rūšiuoti/i }).first();
   const sortNames = { relevant: 'Most relevant', newest: 'Newest', highest: 'Highest rating', lowest: 'Lowest rating' };
   const sorts = knownIds ? ['Newest'] : sortPreference ? [sortNames[sortPreference]] :
     maxReviews > 0 ? ['Newest'] : ['Most relevant', 'Newest', 'Highest rating', 'Lowest rating'];
@@ -317,10 +334,17 @@ async function scrapePlace(page, club, placeUrl, maxReviews, sortPreference, kno
     let previousUnique = collected.size;
     let duplicateSteps = 0;
     if (await sortButton.isVisible().catch(() => false)) {
-      await sortButton.click();
-      const option = page.getByRole('menuitemradio', { name: sort, exact: true }).first();
+      await sortButton.click({ noWaitAfter: true, timeout: 10000 });
+      const names = {
+        'Newest': /Newest|Naujausi|Naujaus/i,
+        'Most relevant': /Most relevant|Aktualiausi|Svarbiausi/i,
+        'Highest rating': /Highest rating|Aukščiausias įvertinimas/i,
+        'Lowest rating': /Lowest rating|Žemiausias įvertinimas/i,
+      };
+      const option = page.getByRole('menuitemradio', { name: names[sort] })
+        .or(page.getByRole('menuitem', { name: names[sort] })).first();
       if (await option.isVisible().catch(() => false)) {
-        await option.click({ timeout: 5000 });
+        await option.click({ timeout: 5000, noWaitAfter: true });
         await page.locator(reviewSelector()).first().waitFor({ timeout: 60000 });
       } else {
         await page.keyboard.press('Escape');
@@ -367,7 +391,8 @@ async function scrapePlace(page, club, placeUrl, maxReviews, sortPreference, kno
       }
     }
   }
-  return { rows: [...collected.values()], expected, crashed, stopped };
+  return { rows: [...collected.values()], expected, crashed, stopped,
+    scanVerified: !knownIds || knownStreak >= 30 || (expected !== null && collected.size >= expected) };
 }
 
 async function main() {
@@ -421,6 +446,7 @@ async function main() {
     const matches = loadMatches();
     const report = fs.existsSync(REPORT_FILE) ? JSON.parse(fs.readFileSync(REPORT_FILE, 'utf8')) : {};
     let total = 0;
+    let consecutiveFailures = 0;
     let clubsInBrowser = 0;
     const restartBrowser = async () => {
       await context.close().catch(() => {});
@@ -447,7 +473,7 @@ async function main() {
           knownIds = new Set(JSON.parse(result.stdout));
           if (!knownIds.size) knownIds = null;
         }
-        const { rows, expected, crashed, stopped } = await scrapePlace(page, club, placeUrl, a.max, a.sort, knownIds);
+        const { rows, expected, crashed, stopped, scanVerified } = await scrapePlace(page, club, placeUrl, a.max, a.sort, knownIds);
         if (!rows.length && expected !== 0 && !stopped) throw new Error('No review cards were parsed');
         let stored;
         if (rows.length) {
@@ -465,7 +491,8 @@ async function main() {
         }
         report[club.id] = {
           collected: stored, collected_this_run: rows.length, displayed_review_count: expected,
-          complete: expected !== null && stored >= expected,
+          complete: expected !== null && stored >= expected && scanVerified !== false,
+          last_error: scanVerified === false ? 'Recent review scan ended before reaching saved reviews' : '',
           scraped_at: new Date().toISOString(), place_url: placeUrl,
         };
         fs.writeFileSync(REPORT_FILE, JSON.stringify(report, null, 2) + '\n');
@@ -474,17 +501,30 @@ async function main() {
         }
         console.log(`${club.id}: coverage ${stored}/${expected ?? '?'}${report[club.id].complete ? ' complete' : ' unverified'}`);
         total += rows.length;
+        consecutiveFailures = report[club.id].complete ? 0 : consecutiveFailures + 1;
         if (crashed) {
           console.warn('Chrome closed or crashed. Stopping this batch to avoid opening another window.');
           break;
         }
         if (stopped) { console.log('Stop requested; saved the reviews collected so far.'); break; }
+        if (consecutiveFailures >= 3) {
+          console.error('Three clubs in a row were incomplete. Pausing this batch; check the Maps sign-in and connection before retrying.');
+          break;
+        }
       } catch (error) {
+        consecutiveFailures++;
+        report[club.id] = { ...previous, last_error: error.message.slice(0, 220),
+          scraped_at: new Date().toISOString(), place_url: previous?.place_url || matches[club.id] || '' };
+        fs.writeFileSync(REPORT_FILE, JSON.stringify(report, null, 2) + '\n');
         const debug = path.join(DATA, `debug_${club.id}.png`);
         await page.screenshot({ path: debug, fullPage: false }).catch(() => {});
         console.error(`${club.id}: ${error.message}\nDebug screenshot: ${debug}`);
         if (/crash|has been closed|Target closed|Browser closed/i.test(error.message)) {
           console.warn('Chrome closed or crashed. Stopping this batch to avoid opening another window.');
+          break;
+        }
+        if (consecutiveFailures >= 3) {
+          console.error('Three clubs failed in a row. Pausing this batch; check the Maps sign-in, connection, or debug screenshots before retrying.');
           break;
         }
       }
@@ -499,4 +539,4 @@ async function main() {
 }
 
 if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });
-module.exports = { dateFromLabel, csv, recordFreshCards };
+module.exports = { dateFromLabel, csv, recordFreshCards, gotoMaps };

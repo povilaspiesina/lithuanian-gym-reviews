@@ -10,18 +10,22 @@
 </head>
 <body>
   <header>
-    <div class="title"><b>Lithuanian Gym Reviews</b><span id="status">Starting local dashboard…</span></div>
+    <div class="title"><b>Lithuanian Gym Reviews</b><span id="status">Starting local dashboard…</span><span id="data-status">Checking archive…</span></div>
     <div class="actions">
       <button id="collect" disabled>Collect missing</button>
       <button id="refresh" disabled>Refresh all</button>
       <button id="login" disabled>Maps sign-in</button>
+      <label class="size-control">Collector size <select id="collector-size"><option value="medium">Medium</option><option value="compact">Compact</option><option value="large">Large</option></select></label>
       <button id="finish-login" hidden>Finish sign-in</button>
       <button id="stop" hidden>Stop after this club</button>
       <button id="import" disabled>Import CSV</button>
+      <button id="hf-token" disabled>Hugging Face token</button>
       <button id="folder" disabled>Data folder</button>
     </div>
   </header>
-  <section id="activity" hidden><b>Collector activity</b><pre id="log"></pre></section>
   <main><div id="loading">Starting the local dashboard…</div><iframe id="dashboard" title="Review dashboard" hidden></iframe></main>
+  <details id="activity"><summary>Collector activity <span id="activity-summary">No activity yet</span></summary><pre id="log"></pre></details>
+  <dialog id="signin-dialog"><h2>Sign in to Google Maps</h2><p>The collector uses a separate local browser window. Sign in there before collecting reviews so Maps can show review controls consistently.</p><div class="dialog-actions"><button id="signin-later" type="button">Later</button><button id="signin-now" type="button">Open Maps sign-in</button></div></dialog>
+  <dialog id="token-dialog"><h2>Hugging Face token</h2><p>Use a fine-grained token with “Make calls to Inference Providers” permission. It is stored encrypted on this computer and sent only to Hugging Face when you analyze reviews.</p><label>Token <input id="token-input" type="password" autocomplete="off" placeholder="hf_…"></label><div class="dialog-actions"><button id="token-remove" type="button">Remove token</button><button id="token-cancel" type="button">Cancel</button><button id="token-save" type="button">Save token</button></div><p id="token-message"></p></dialog>
 </body>
 </html>

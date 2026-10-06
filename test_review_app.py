@@ -1,10 +1,14 @@
 import csv
+import io
+import json
+import os
 import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
+from unittest.mock import patch
 
-from review_app import chart_data, connect, export_club_csv, import_csv, review_data, stats
+from review_app import ask_hugging_face, chart_csv, chart_data, connect, export_club_csv, import_csv, review_data, stats
 
 
 class ReviewAppTests(unittest.TestCase):
@@ -68,6 +72,19 @@ class ReviewAppTests(unittest.TestCase):
                 self.assertEqual(stats(con, {"comment": ["rating_only"]})["review_count"], 0)
                 self.assertEqual(chart_data(con, {})["clubs"][0]["average_rating"], 3.5)
                 self.assertEqual(chart_data(con, {})["trend"][0]["period"], "2026-08-01")
+                self.assertEqual(stats(con, {"reply": ["replied"]})["review_count"], 1)
+                self.assertEqual(stats(con, {"reply": ["unreplied"]})["review_count"], 1)
+                charts = chart_data(con, {})
+                charts["ratings"] = stats(con, {})["ratings"]
+                self.assertIn("average_rating", chart_csv(charts, "volume").decode("utf-8-sig"))
+                self.assertIn("club", chart_csv(charts, "clubs").decode("utf-8-sig"))
+                with patch.dict(os.environ, {"HF_TOKEN": "hf_fake"}):
+                    fake = io.BytesIO(json.dumps({"choices": [{"message": {"content": "Crowding is cited [b]."}}]}).encode())
+                    with patch("review_app.urllib.request.urlopen", return_value=fake) as request:
+                        answer = ask_hugging_face(con, {}, "What issues recur?", "openai/gpt-oss-120b:cheapest", "issues")
+                    self.assertEqual(answer["sampled"], 1)
+                    self.assertIn("Crowding", answer["answer"])
+                    self.assertEqual(request.call_args.args[0].get_header("Authorization"), "Bearer hf_fake")
                 params = {"period": ["custom"], "start": ["2026-09-01"],
                           "end": ["2026-09-30"], "rating": ["5"], "q": ["clean"]}
                 self.assertEqual(stats(con, params)["review_count"], 1)
