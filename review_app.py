@@ -326,6 +326,7 @@ def coverage_data(con):
     imported_counts = dict(con.execute("SELECT club_id, COUNT(*) FROM reviews GROUP BY club_id"))
     current = {}
     missing_known = 0
+    states = {"complete": 0, "partial": 0, "error": 0, "unchecked": 0, "unverified": 0}
     for club in clubs():
         if club["status"] != "open":
             continue
@@ -334,11 +335,27 @@ def coverage_data(con):
         expected = entry.get("displayed_review_count")
         entry["collected"] = count
         entry["complete"] = expected is not None and count >= expected and not entry.get("last_error")
+        if entry.get("last_error"):
+            state = "error"
+        elif entry["complete"]:
+            state = "complete"
+        elif not entry.get("scraped_at") and not count:
+            state = "unchecked"
+        elif expected is None:
+            state = "unverified"
+        else:
+            state = "partial"
+        entry["state"] = state
+        entry["missing"] = max(expected - count, 0) if expected is not None else None
+        states[state] += 1
         if expected is not None:
             missing_known += max(expected - count, 0)
         current[club["id"]] = entry
     last_checked = max((x.get("scraped_at", "") for x in current.values()), default="")
     last_imported = con.execute("SELECT MAX(imported_at) FROM reviews").fetchone()[0]
+    date_quality = dict(con.execute(
+        "SELECT date_precision, COUNT(*) FROM reviews GROUP BY date_precision"
+    ).fetchall())
     return {
         "open": len(current), "attempted": sum(bool(x.get("scraped_at")) for x in current.values()),
         "complete": sum(x["complete"] for x in current.values()),
@@ -346,6 +363,7 @@ def coverage_data(con):
         "unverified": sum(x.get("displayed_review_count") is None for x in current.values()),
         "failed": sum(bool(x.get("last_error")) for x in current.values()),
         "last_checked": last_checked, "last_imported": last_imported, "clubs": current,
+        "states": states, "date_quality": date_quality,
     }
 
 

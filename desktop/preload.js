@@ -11,7 +11,7 @@ contextBridge.exposeInMainWorld('gymApp', {
   setToken: token => ipcRenderer.invoke('hf-set-token', token),
   setCollectorSize: size => ipcRenderer.invoke('collector-size', size),
   on: (channel, callback) => {
-    if (!['dashboard-ready', 'collector-status', 'app-log', 'app-error', 'reload-dashboard', 'data-summary'].includes(channel)) return;
+    if (!['dashboard-ready', 'collector-status', 'collector-progress', 'app-log', 'app-error', 'reload-dashboard', 'data-summary'].includes(channel)) return;
     ipcRenderer.on(channel, (_event, value) => callback(value));
   },
 });

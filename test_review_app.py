@@ -8,10 +8,36 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
-from review_app import ask_hugging_face, chart_csv, chart_data, connect, export_club_csv, import_csv, review_data, stats
+from review_app import ask_hugging_face, chart_csv, chart_data, connect, coverage_data, export_club_csv, import_csv, review_data, stats
 
 
 class ReviewAppTests(unittest.TestCase):
+    def test_coverage_distinguishes_missing_unknown_and_failed_scans(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            first = "gym-vilnius-mokslininku-g-6a"
+            second = "gym-vilnius-gedimino-pr-9"
+            third = "lemon-gym-didzioji-riese-moletu-g-13"
+            report = root / "scrape-report.json"
+            report.write_text(json.dumps({
+                first: {"displayed_review_count": 3, "scraped_at": "2026-10-01T10:00:00Z"},
+                second: {"displayed_review_count": None, "scraped_at": "2026-10-01T11:00:00Z"},
+                third: {"displayed_review_count": 1, "last_error": "Maps timed out", "scraped_at": "2026-10-01T12:00:00Z"},
+            }), encoding="utf-8")
+            source = root / "reviews.csv"
+            source.write_text("club_id,review_id,rating,published_at,text,date_precision\n"
+                              f"{first},a,4,2026-09-01,Good,estimated\n"
+                              f"{second},b,3,2026-09-02,Okay,exact\n", encoding="utf-8")
+            with closing(connect(root / "reviews.sqlite3")) as con, patch("review_app.REPORT", report):
+                import_csv(con, source)
+                result = coverage_data(con)
+            self.assertEqual(result["missing_known"], 3)
+            self.assertEqual(result["clubs"][first]["state"], "partial")
+            self.assertEqual(result["clubs"][second]["state"], "unverified")
+            self.assertIsNone(result["clubs"][second]["missing"])
+            self.assertEqual(result["clubs"][third]["state"], "error")
+            self.assertEqual(result["date_quality"], {"estimated": 1, "exact": 1})
+
     def test_written_comment_filter_and_charts_share_the_same_scope(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

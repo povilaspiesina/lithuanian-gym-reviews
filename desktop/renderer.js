@@ -78,6 +78,9 @@ $('import').onclick = async () => {
 };
 window.gymApp.on('dashboard-ready', dashboardReady);
 window.gymApp.on('collector-status', state => { running = state.running; mode = state.mode; setControls(); });
+window.gymApp.on('collector-progress', state => {
+  if ($('dashboard').src) $('dashboard').contentWindow.postMessage({type:'gym-collector-progress', clubId: state.clubId}, new URL($('dashboard').src).origin);
+});
 window.gymApp.on('app-log', appendLog);
 window.gymApp.on('app-error', message => { appendLog(message); $('status').textContent = 'Error'; });
 window.gymApp.on('data-summary', data => {
@@ -87,4 +90,12 @@ window.gymApp.on('data-summary', data => {
   $('data-status').textContent = `${data.review_count.toLocaleString()} reviews · ${coverage.complete}/${coverage.open} clubs complete · ${coverage.missing_known.toLocaleString()} known missing · ${coverage.failed} errors · updated ${when}`;
 });
 window.gymApp.on('reload-dashboard', () => { if ($('dashboard').src) $('dashboard').contentWindow.location.reload(); });
+window.addEventListener('message', async event => {
+  if (event.source !== $('dashboard').contentWindow || event.origin !== new URL($('dashboard').src).origin) return;
+  if (event.data?.type !== 'gym-collector-start') return;
+  const result = await window.gymApp.start({ mode: event.data.mode, clubId: event.data.clubId, clubIds: event.data.clubIds });
+  if (result.needsSignIn) $('signin-dialog').showModal();
+  $('dashboard').contentWindow.postMessage({type:'gym-collector-result', ok: Boolean(result.ok),
+    message: result.ok ? 'Collection started. The table will update as clubs finish.' : result.message}, event.origin);
+});
 window.gymApp.dashboardUrl().then(url => { if (url) dashboardReady(url); });

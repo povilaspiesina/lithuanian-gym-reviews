@@ -20,6 +20,11 @@ const BACKEND = process.env.GYM_REVIEW_APP_EXE;
 const STOP_FILE = process.env.GYM_STOP_FILE;
 const stopRequested = () => Boolean(STOP_FILE && fs.existsSync(STOP_FILE));
 const shouldSkipClub = (previous, all, retry) => Boolean(all && previous?.complete && !previous?.last_error && !retry);
+function saveReport(report) {
+  const temporary = REPORT_FILE + '.tmp';
+  fs.writeFileSync(temporary, JSON.stringify(report, null, 2) + '\n');
+  fs.renameSync(temporary, REPORT_FILE);
+}
 
 function reviewApp(args) {
   return BACKEND
@@ -464,6 +469,7 @@ async function main() {
         console.log(`${club.id}: already checked (${previous.collected}/${previous.displayed_review_count}); use --retry to run again`);
         continue;
       }
+      console.log(`COLLECTOR_CLUB=${club.id}`);
       try {
         const placeUrl = await resolvePlace(page, club, matches, rl);
         if (!placeUrl) continue;
@@ -496,7 +502,7 @@ async function main() {
           last_error: scanVerified === false ? 'Recent review scan ended before reaching saved reviews' : '',
           scraped_at: new Date().toISOString(), place_url: placeUrl,
         };
-        fs.writeFileSync(REPORT_FILE, JSON.stringify(report, null, 2) + '\n');
+        saveReport(report);
         if (!report[club.id].complete) {
           await page.screenshot({ path: path.join(DATA, `incomplete_${club.id}.png`), fullPage: false }).catch(() => {});
         }
@@ -516,7 +522,7 @@ async function main() {
         consecutiveFailures++;
         report[club.id] = { ...previous, last_error: error.message.slice(0, 220),
           scraped_at: new Date().toISOString(), place_url: previous?.place_url || matches[club.id] || '' };
-        fs.writeFileSync(REPORT_FILE, JSON.stringify(report, null, 2) + '\n');
+        saveReport(report);
         const debug = path.join(DATA, `debug_${club.id}.png`);
         await page.screenshot({ path: debug, fullPage: false }).catch(() => {});
         console.error(`${club.id}: ${error.message}\nDebug screenshot: ${debug}`);

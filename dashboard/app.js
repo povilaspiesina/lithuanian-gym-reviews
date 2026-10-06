@@ -4,7 +4,8 @@ const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const pct = (n, d) => d ? `${(100 * n / d).toFixed(1)}%` : '—';
 const fmt = n => Number(n).toLocaleString();
-let overviewData = null, reviewData = null, reviewOffset = 0;
+let overviewData = null, reviewData = null, collectionData = null, reviewOffset = 0;
+let activeClubId = '';
 let sortKey = 'count', sortDescending = true;
 
 function filterFields() {
@@ -94,22 +95,84 @@ function renderCoverage(coverage) {
   $('#coverage').textContent = `${coverage.complete}/${coverage.open}`;
   $('#coverage-note').textContent = `${coverage.attempted} checked · ${coverage.unverified} unverified · ${coverage.failed} errors`;
   $('#missing').textContent = fmt(coverage.missing_known);
-  $('#missing-note').textContent = 'from clubs with a displayed Maps count';
+  $('#missing-note').textContent = `${coverage.unverified} clubs have no verified Maps count`;
   const imported = coverage.last_imported ? new Date(coverage.last_imported).toLocaleString() : 'unknown';
   const checked = coverage.last_checked ? new Date(coverage.last_checked).toLocaleString() : 'never';
   const label = `Archive updated: ${imported} · Maps checked: ${checked}`;
   $('#overview-updated').textContent = label;
   $('#reviews-updated').textContent = label;
+  $('#collection-updated').textContent = label;
+  const quality = coverage.date_quality || {};
+  const estimated = quality.estimated || 0, unknown = quality.unknown || 0;
+  $('#overview-quality').textContent = `Across the archive, ${fmt(estimated)} reviews have estimated dates${unknown ? ` and ${fmt(unknown)} have unknown date precision` : ''}. Time charts and date filters use the stored dates. “Known missing” counts only clubs where Maps supplied a total; unknown coverage is never counted as zero.`;
   const entries = clubs.filter(c => c.status === 'open').map(c => ({ club: c, info: coverage.clubs[c.id] || {} }));
   entries.sort((a, b) => Number(a.info.complete) - Number(b.info.complete) || a.club.chain.localeCompare(b.club.chain));
   $('#coverage-list').innerHTML = entries.map(({club, info}) => {
     const count = info.collected || 0;
     const expected = info.displayed_review_count;
-    const state = expected == null ? 'unverified' : info.complete ? 'complete' : `${Math.max(expected-count,0)} missing`;
+    const state = info.state === 'unchecked' ? 'not checked' : info.state === 'error' ? 'error' : expected == null ? 'coverage unknown' : info.complete ? 'complete' : `${Math.max(expected-count,0)} missing`;
     const checked = info.scraped_at ? ` · checked ${esc(new Date(info.scraped_at).toLocaleDateString())}` : '';
     return `<div class="coverage-row"><span>${esc(club.chain)} · ${esc(club.club_name)} · ${esc(club.locality)}${checked}${info.last_error ? ` · ${esc(info.last_error)}` : ''}</span><b>${fmt(count)}/${expected == null ? '?' : fmt(expected)} · ${state}</b></div>`;
   }).join('');
 }
+
+function collectionStateLabel(state) {
+  return ({complete:'Complete', partial:'Partial', error:'Error', unchecked:'Not checked', unverified:'Coverage unknown'})[state] || 'Coverage unknown';
+}
+function renderCollection(coverage) {
+  collectionData = coverage;
+  renderCoverage(coverage);
+  const states = coverage.states || {};
+  $('#collection-progress').max = coverage.open || 1;
+  $('#collection-progress').value = states.complete || 0;
+  $('#collection-progress-label').textContent = `${fmt(states.complete || 0)} of ${fmt(coverage.open)} open clubs have verified coverage · ${fmt(coverage.missing_known)} known reviews missing`;
+  if (activeClubId && byId.has(activeClubId)) {
+    const club = byId.get(activeClubId);
+    $('#collection-progress-label').textContent += ` · Scanning ${club.chain} · ${club.club_name}`;
+  }
+  $('#collection-state-counts').innerHTML = ['complete','partial','error','unchecked','unverified'].map(state => `<span class="status-pill ${state}">${collectionStateLabel(state)}: ${fmt(states[state] || 0)}</span>`).join('');
+  const filter = $('#collection-filter').value;
+  const entries = clubs.filter(c => c.status === 'open').map(club => ({club, info: coverage.clubs[club.id] || {}}))
+    .filter(({info}) => filter === 'all' || (filter === 'complete' ? info.state === 'complete' : info.state !== 'complete'))
+    .sort((a,b) => (a.info.state === 'complete') - (b.info.state === 'complete') || a.club.chain.localeCompare(b.club.chain) || a.club.club_name.localeCompare(b.club.club_name));
+  $('#collection-rows').innerHTML = entries.map(({club,info}) => {
+    const expected = info.displayed_review_count;
+    const checked = info.scraped_at ? new Date(info.scraped_at).toLocaleString() : 'Never';
+    const detail = info.last_error || (info.state === 'unchecked' ? 'No collection recorded' : expected == null ? 'Maps total unavailable; completeness cannot be verified' : info.missing > 0 ? `${fmt(info.missing)} below Maps total` : 'Saved count meets Maps total');
+    return `<tr><td><b>${esc(club.chain)} · ${esc(club.club_name)}</b><div class="subtle">${esc(club.locality)}</div></td><td><span class="status-pill ${club.id === activeClubId ? 'scanning' : esc(info.state)}">${club.id === activeClubId ? 'Scanning' : collectionStateLabel(info.state)}</span></td><td>${fmt(info.collected || 0)} / ${expected == null ? 'Unknown' : fmt(expected)}</td><td>${esc(checked)}</td><td class="collection-detail">${esc(detail)}</td><td><button type="button" class="retry-club" data-retry-club="${esc(club.id)}">${info.state === 'complete' ? 'Refresh' : 'Retry'}</button></td></tr>`;
+  }).join('') || '<tr><td colspan="6">No clubs in this view.</td></tr>';
+}
+async function loadCollection() {
+  try {
+    const response = await fetch('/api/status');
+    if (!response.ok) throw new Error('Could not load collection status');
+    renderCollection((await response.json()).coverage);
+  } catch (error) { $('#collection-action-status').textContent = error.message; }
+}
+function requestCollection(mode, clubId) {
+  if (window.parent === window) {
+    $('#collection-action-status').textContent = 'Open the desktop app to run the collector.';
+    return;
+  }
+  const clubIds = mode === 'attention' ? clubs.filter(c => c.status === 'open' && collectionData?.clubs[c.id]?.state !== 'complete').map(c => c.id) : undefined;
+  if (mode === 'attention' && !clubIds.length) {
+    $('#collection-action-status').textContent = 'All open clubs have verified coverage.';
+    return;
+  }
+  window.parent.postMessage({type:'gym-collector-start', mode, clubId, clubIds}, '*');
+  $('#collection-action-status').textContent = 'Starting collection…';
+}
+window.addEventListener('message', event => {
+  if (event.source !== window.parent) return;
+  if (event.data?.type === 'gym-collector-progress') {
+    activeClubId = event.data.clubId || '';
+    if (collectionData) renderCollection(collectionData);
+    return;
+  }
+  if (event.data?.type !== 'gym-collector-result') return;
+  $('#collection-action-status').textContent = event.data.message;
+  if (event.data.ok) loadCollection();
+});
 
 function renderOverview(data) {
   const s = data.stats, count = s.review_count;
@@ -120,7 +183,7 @@ function renderOverview(data) {
   $('#low-reply').textContent = pct(s.low_rating_replied_count,s.low_rating_count);
   renderCoverage(data.coverage);
   $('#distribution').innerHTML = [5,4,3,2,1].map(n => `<button type="button" class="distribution-row" data-rating="${n}" data-tip="${n} stars: ${fmt(s.ratings[n])} reviews (${pct(s.ratings[n],count)})"><span>${n} ★</span><span class="bar-track"><span class="bar-fill" style="width:${count ? 100*s.ratings[n]/count : 0}%"></span></span><span>${fmt(s.ratings[n])}</span></button>`).join('');
-  $('#trend-note').textContent = `${{day:'Daily',month:'Monthly',year:'Yearly'}[data.charts.grain]} totals · Maps dates are estimated`;
+  $('#trend-note').textContent = `${{day:'Daily',month:'Monthly',year:'Yearly'}[data.charts.grain]} totals · some review dates may be estimated`;
   renderPlot('#trend', data.charts.trend, 'count');
   renderPlot('#rating-trend', data.charts.trend, 'average_rating');
   $('#chains').innerHTML = data.charts.chains.length ? data.charts.chains.map(row => `<button type="button" class="compare-row" data-chain="${esc(row.chain)}" data-tip="${esc(`${row.chain}: ${row.average_rating} ★ from ${fmt(row.count)} reviews`)}"><b>${esc(row.chain)}</b><span class="bar-track"><span class="bar-fill" style="width:${100*row.average_rating/5}%"></span></span><span>${row.average_rating.toFixed(2)} ★</span><span>${fmt(row.count)}</span></button>`).join('') : '<p class="muted">No reviews in this selection.</p>';
@@ -216,9 +279,18 @@ document.querySelectorAll('[data-view]').forEach(button => button.onclick = () =
   const view = button.dataset.view;
   document.querySelectorAll('[data-view]').forEach(x => x.classList.toggle('nav-active', x === button));
   $('#overview-view').hidden = view !== 'overview';
+  $('#collection-view').hidden = view !== 'collection';
   $('#reviews-view').hidden = view !== 'reviews';
+  if (view === 'collection') loadCollection();
   if (view === 'reviews' && !reviewData) loadReviews();
 });
+$('#collection-filter').onchange = () => { if (collectionData) renderCollection(collectionData); };
+$('#retry-problem-clubs').onclick = () => requestCollection('attention');
+$('#collection-rows').onclick = event => {
+  const button = event.target.closest('[data-retry-club]');
+  if (button) requestCollection('club', button.dataset.retryClub);
+};
+setInterval(() => { if (!$('#collection-view').hidden) loadCollection(); }, 5000);
 document.addEventListener('click', event => {
   const rating = event.target.closest('[data-rating]');
   if (rating) { $('#overview-filters').elements.rating.value = rating.dataset.rating; loadOverview(); }

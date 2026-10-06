@@ -134,7 +134,7 @@ async function refreshDataSummary() {
   } catch { /* The backend may still be starting or shutting down. */ }
 }
 
-function startCollector(mode) {
+function startCollector(mode, clubId = '', clubIds = []) {
   if (collector) return { ok: false, message: 'A collection or sign-in is already running.' };
   if (mode !== 'login' && !signedInOnce()) {
     return { ok: false, needsSignIn: true, message: 'Sign in to Google Maps before collecting.' };
@@ -142,7 +142,9 @@ function startCollector(mode) {
   const stopFile = path.join(dataDir(), 'stop-requested');
   fs.rmSync(stopFile, { force: true });
   const args = mode === 'login' ? ['login'] :
-    mode === 'refresh' ? ['run', '--all', '--retry', '--incremental'] : ['run', '--all'];
+    mode === 'refresh' ? ['run', '--all', '--retry', '--incremental'] :
+    mode === 'club' ? ['run', '--club', clubId, '--retry'] :
+    mode === 'attention' ? ['run', '--clubs', clubIds.join(',')] : ['run', '--all'];
   const env = { ...childEnv(), ELECTRON_RUN_AS_NODE: '1', GYM_STOP_FILE: stopFile };
   delete env.HF_TOKEN;
   collectorMode = mode;
@@ -150,7 +152,17 @@ function startCollector(mode) {
     env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
   });
   send('collector-status', { running: true, mode });
-  collector.stdout.on('data', chunk => send('app-log', chunk.toString()));
+  let progressBuffer = '';
+  collector.stdout.on('data', chunk => {
+    const output = chunk.toString();
+    send('app-log', output);
+    progressBuffer += output;
+    const lines = progressBuffer.split(/\r?\n/);
+    progressBuffer = lines.pop().slice(-300);
+    for (const line of lines) {
+      if (line.startsWith('COLLECTOR_CLUB=')) send('collector-progress', {clubId: line.slice(15)});
+    }
+  });
   collector.stderr.on('data', chunk => send('app-log', chunk.toString()));
   collector.on('error', error => send('app-error', `Collector failed: ${error.message}`));
   collector.on('exit', code => {
@@ -159,6 +171,7 @@ function startCollector(mode) {
     collectorMode = '';
     fs.rmSync(stopFile, { force: true });
     send('collector-status', { running: false, mode: '' });
+    send('collector-progress', {clubId: ''});
     send('reload-dashboard');
     refreshDataSummary();
   });
@@ -166,9 +179,19 @@ function startCollector(mode) {
 }
 
 ipcMain.handle('dashboard-url', () => dashboardUrl);
-ipcMain.handle('collector-start', (_event, mode) => {
-  if (!['missing', 'refresh', 'login'].includes(mode)) return { ok: false, message: 'Invalid action.' };
-  return startCollector(mode);
+ipcMain.handle('collector-start', (_event, request) => {
+  const mode = typeof request === 'string' ? request : request?.mode;
+  const clubId = typeof request === 'object' ? request?.clubId : '';
+  const clubIds = typeof request === 'object' ? request?.clubIds : undefined;
+  if (!['missing', 'attention', 'refresh', 'login', 'club'].includes(mode)) return { ok: false, message: 'Invalid action.' };
+  if (mode === 'club' || mode === 'attention') {
+    const directory = JSON.parse(fs.readFileSync(resource('gyms_lt.json'), 'utf8'));
+    const openIds = new Set(directory.clubs.filter(club => club.status === 'open').map(club => club.id));
+    if (mode === 'club' && !openIds.has(clubId)) return { ok: false, message: 'Invalid club.' };
+    if (mode === 'attention' && (!Array.isArray(clubIds) || !clubIds.length || clubIds.length > openIds.size ||
+      clubIds.some(id => !openIds.has(id)) || new Set(clubIds).size !== clubIds.length)) return { ok: false, message: 'Invalid club selection.' };
+  }
+  return startCollector(mode, clubId, clubIds);
 });
 ipcMain.handle('collector-finish-login', () => {
   if (collectorMode !== 'login' || !collector) return { ok: false };
