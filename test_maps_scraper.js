@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { dateFromLabel, csv, recordFreshCards, gotoMaps } = require('./maps_scraper');
+const { dateFromLabel, csv, recordFreshCards, gotoMaps, shouldSkipClub } = require('./maps_scraper');
 
 test('relative review dates are marked estimated', () => {
   assert.deepEqual(dateFromLabel('2 weeks ago', new Date('2026-10-01T12:00:00Z')),
@@ -37,4 +37,9 @@ test('Maps navigation retries one transient timeout', async () => {
   };
   await gotoMaps(page, 'https://www.google.com/maps/');
   assert.equal(attempts, 2);
+});
+
+test('a failed refresh is eligible for Collect missing', () => {
+  assert.equal(shouldSkipClub({ complete: true }, true, false), true);
+  assert.equal(shouldSkipClub({ complete: true, last_error: 'timeout' }, true, false), false);
 });

@@ -19,6 +19,7 @@ const CHROME = process.env.GYM_BROWSER_EXECUTABLE ||
 const BACKEND = process.env.GYM_REVIEW_APP_EXE;
 const STOP_FILE = process.env.GYM_STOP_FILE;
 const stopRequested = () => Boolean(STOP_FILE && fs.existsSync(STOP_FILE));
+const shouldSkipClub = (previous, all, retry) => Boolean(all && previous?.complete && !previous?.last_error && !retry);
 
 function reviewApp(args) {
   return BACKEND
@@ -406,10 +407,10 @@ async function main() {
   if (a.command === 'status') {
     const report = fs.existsSync(REPORT_FILE) ? JSON.parse(fs.readFileSync(REPORT_FILE, 'utf8')) : {};
     const open = CLUBS.filter(c => c.status === 'open');
-    console.log(`${Object.values(report).filter(r => r.complete).length}/${open.length} open clubs complete; ${Object.keys(report).length} attempted.`);
+    console.log(`${Object.values(report).filter(r => r.complete && !r.last_error).length}/${open.length} open clubs complete; ${Object.keys(report).length} attempted.`);
     for (const club of open) {
       const item = report[club.id];
-      if (item) console.log(`${item.complete ? 'complete' : 'partial '} ${club.id}: ${item.collected}/${item.displayed_review_count ?? '?'}`);
+      if (item) console.log(`${item.complete && !item.last_error ? 'complete' : 'partial '} ${club.id}: ${item.collected}/${item.displayed_review_count ?? '?'}`);
     }
     return;
   }
@@ -459,7 +460,7 @@ async function main() {
     for (const club of selected) {
       if (stopRequested()) { console.log('Stop requested; ending after the previous club.'); break; }
       const previous = report[club.id];
-      if (a.all && previous?.complete && !a.retry) {
+      if (shouldSkipClub(previous, a.all, a.retry)) {
         console.log(`${club.id}: already checked (${previous.collected}/${previous.displayed_review_count}); use --retry to run again`);
         continue;
       }
@@ -539,4 +540,4 @@ async function main() {
 }
 
 if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });
-module.exports = { dateFromLabel, csv, recordFreshCards, gotoMaps };
+module.exports = { dateFromLabel, csv, recordFreshCards, gotoMaps, shouldSkipClub };
