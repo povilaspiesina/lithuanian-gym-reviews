@@ -7,6 +7,17 @@ const fmt = n => Number(n).toLocaleString();
 let overviewData = null, reviewData = null, collectionData = null, reviewOffset = 0;
 let activeClubId = '';
 let sortKey = 'count', sortDescending = true;
+const aiPresets = {
+  issues: {mode:'issues', prompt:'Group recurring problems in these reviews. For each theme, give a concise explanation and cite review IDs and author names when available. Separate common patterns from isolated reports, and do not infer prevalence beyond this sample.'},
+  actions: {mode:'issues', prompt:'Recommend the three most practical improvements the gyms could make based on these negative reviews. For each, describe the customer problem, a concrete action, and supporting review IDs with author names when available. Say when evidence is sparse.'},
+  billing: {mode:'issues', prompt:'Examine membership terms, cancellation, charges, and billing complaints in this sample. Identify distinct issues and cite review IDs and author names when available. If the sample has no relevant complaints, say so. Do not make legal conclusions.'},
+  strengths: {mode:'summary', prompt:'What do members value most in these gyms? Group positive themes and cite representative review IDs and author names when available. Distinguish repeated praise from one-off comments.'},
+  replies: {mode:'summary', prompt:'Assess the owner replies present in this sample. Which concerns receive a specific response, and which replies are generic or leave the concern unresolved? Cite review IDs and author names when available. Do not judge reviews without a reply as if they were answered.'},
+  recent: {mode:'summary', prompt:'Summarize what reviewers say in the selected date period. Highlight positive and negative themes with review IDs and author names when available. Note that Google Maps dates may be estimated and do not claim a trend unless the supplied sample supports it.'},
+  compare: {mode:'summary', prompt:'Compare the chains or clubs represented in this sample. Describe differences supported by the reviews, cite review IDs and author names when available, and state when a club has too few sampled comments for a useful comparison.'},
+  brief: {mode:'summary', prompt:'Write a short management brief with strengths, recurring problems, owner response gaps, and two practical next actions. Cite review IDs and author names when available. Keep conclusions limited to this sample.'},
+  question: {mode:'question', prompt:''},
+};
 
 function filterFields() {
   const choices = (items, label) => `<option value="">All ${label}</option>` + items.map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join('');
@@ -245,7 +256,7 @@ function renderReviews(data) {
   $('#reviews').innerHTML = data.reviews.length ? data.reviews.map(row => {
     const club = byId.get(row.club_id);
     const heading = `${esc(club.chain)} · ${esc(club.club_name)} <span class="stars">${'★'.repeat(row.rating)}</span>`;
-    if (!row.text.trim()) return `<article class="review rating-only"><h3>${heading}</h3></article>`;
+    if (!row.text.trim()) return `<article class="review rating-only"><h3>${heading}</h3><div class="meta">${row.author ? esc(row.author) : 'Author unavailable'}</div></article>`;
     const directLink = row.review_url && (row.review_url.includes(row.review_id) || row.review_url.includes('/maps/reviews/data='));
     const linkLabel = directLink ? 'Review on Maps' : 'Club on Maps';
     const meta = `${esc(club.locality)} · ${row.date_precision === 'estimated' ? 'about ' : ''}${esc(row.published_at)}${row.published_label ? ` (${esc(row.published_label)})` : ''}${row.author ? ` · ${esc(row.author)}` : ''}${row.review_url ? ` · <a href="${esc(row.review_url)}" target="_blank" rel="noopener noreferrer">${linkLabel}</a>` : ''}`;
@@ -300,7 +311,7 @@ async function askAI() {
   const button = $('#ai-run'), status = $('#ai-status'), result = $('#ai-result');
   button.disabled = true; status.textContent = 'Analyzing a sample of matching written reviews…'; result.hidden = true;
   try {
-    const mode = $('#ai-mode').value;
+    const mode = aiPresets[$('#ai-mode').value].mode;
     const response = await fetch('/api/ai?' + query($('#review-filters')), {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({mode, model:$('#ai-model').value.trim(), question:$('#ai-question').value.trim()}),
@@ -349,9 +360,5 @@ $('#reviews').onclick = event => {
   if (button) translateCard(button);
 };
 $('#translation-language').onchange = () => { if (reviewData) renderReviews(reviewData); };
-$('#ai-mode').onchange = () => {
-  if ($('#ai-mode').value === 'issues') $('#ai-question').value = 'Summarize the main recurring issues. Include concrete examples with review IDs.';
-  else if ($('#ai-mode').value === 'summary') $('#ai-question').value = 'Summarize the main positive and negative themes. Include concrete examples with review IDs.';
-  else $('#ai-question').value = '';
-};
+$('#ai-mode').onchange = () => { $('#ai-question').value = aiPresets[$('#ai-mode').value].prompt; };
 loadOverview();

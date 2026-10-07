@@ -175,6 +175,15 @@ class ReviewAppTests(unittest.TestCase):
                     self.assertEqual(answer["sampled"], 1)
                     self.assertIn("Crowding", answer["answer"])
                     self.assertEqual(request.call_args.args[0].get_header("Authorization"), "Bearer hf_fake")
+                    prompt_body = json.loads(request.call_args.args[0].data)
+                    self.assertIn('"author": "B"', prompt_body["messages"][1]["content"])
+                with patch.dict(os.environ, {"HF_TOKEN": "hf_fake"}):
+                    response = io.BytesIO(json.dumps({"choices": [{"message": {"content": "A replied."}}]}).encode())
+                    with patch("review_app.urllib.request.urlopen", return_value=response) as request:
+                        ask_hugging_face(con, {}, "Assess replies", "openai/gpt-oss-120b:cheapest", "summary")
+                    prompt_body = json.loads(request.call_args.args[0].data)
+                    self.assertIn('"author": "A"', prompt_body["messages"][1]["content"])
+                    self.assertIn('"owner_reply": "Thanks"', prompt_body["messages"][1]["content"])
                 params = {"period": ["custom"], "start": ["2026-09-01"],
                           "end": ["2026-09-30"], "rating": ["5"], "q": ["clean"]}
                 self.assertEqual(stats(con, params)["review_count"], 1)
