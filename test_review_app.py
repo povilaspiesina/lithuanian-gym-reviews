@@ -8,10 +8,57 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
-from review_app import ask_hugging_face, chart_csv, chart_data, connect, coverage_data, export_club_csv, import_csv, review_data, stats
+from review_app import ask_hugging_face, chart_csv, chart_data, connect, coverage_data, export_club_csv, hugging_face_chat, import_csv, review_data, stats, translate_review
 
 
 class ReviewAppTests(unittest.TestCase):
+    def test_hugging_face_rejects_cut_off_output(self):
+        incomplete = io.BytesIO(json.dumps({"choices": [{"message": {"content": "partial"},
+                                                     "finish_reason": "length"}]}).encode())
+        with patch("review_app.urllib.request.urlopen", return_value=incomplete):
+            with self.assertRaisesRegex(ValueError, "output limit"):
+                hugging_face_chat({"model": "example", "messages": []}, "hf_fake")
+
+    def test_translation_caches_full_review_and_reply(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            club = "gym-vilnius-mokslininku-g-6a"
+            source = root / "reviews.csv"
+            comment = ("Clean gym. " * 80).strip()
+            with source.open("w", newline="", encoding="utf-8") as file:
+                writer = csv.DictWriter(file, fieldnames=["club_id", "review_id", "rating", "published_at", "text", "owner_reply_text"])
+                writer.writeheader()
+                writer.writerow({"club_id": club, "review_id": "full", "rating": 5, "published_at": "2026-10-01",
+                                 "text": comment, "owner_reply_text": "Thank you for visiting."})
+            with closing(connect(root / "reviews.sqlite3")) as con:
+                import_csv(con, source)
+                replies = [io.BytesIO(json.dumps({"choices": [{"message": {"content": text}, "finish_reason": "stop"}]}).encode())
+                           for text in ("Švari sporto salė.", "Ačiū, kad apsilankėte.")]
+                with patch.dict(os.environ, {"HF_TOKEN": "hf_fake"}), patch("review_app.urllib.request.urlopen", side_effect=replies) as request:
+                    first = translate_review(con, club, "full", "lt", "openai/gpt-oss-120b:cheapest")
+                    second = translate_review(con, club, "full", "lt", "openai/gpt-oss-120b:cheapest")
+                self.assertEqual(first["text"], "Švari sporto salė.")
+                self.assertEqual(first["reply"], "Ačiū, kad apsilankėte.")
+                self.assertFalse(first["cached"])
+                self.assertTrue(second["cached"])
+                self.assertEqual(request.call_count, 2)
+                body = json.loads(request.call_args_list[0].args[0].data)
+                self.assertEqual(body["messages"][1]["content"], comment)
+                self.assertEqual(con.execute("SELECT text FROM reviews WHERE review_id='full'").fetchone()[0], comment)
+                with source.open("w", newline="", encoding="utf-8") as file:
+                    writer = csv.DictWriter(file, fieldnames=["club_id", "review_id", "rating", "published_at", "text", "owner_reply_text"])
+                    writer.writeheader()
+                    writer.writerow({"club_id": club, "review_id": "full", "rating": 5, "published_at": "2026-10-01",
+                                     "text": "Clean … More", "owner_reply_text": "Thank … More"})
+                import_csv(con, source)
+                saved = con.execute("SELECT text, owner_reply_text FROM reviews WHERE review_id='full'").fetchone()
+                self.assertEqual(tuple(saved), (comment, "Thank you for visiting."))
+                ai_response = io.BytesIO(json.dumps({"choices": [{"message": {"content": "Positive feedback."}, "finish_reason": "stop"}]}).encode())
+                with patch.dict(os.environ, {"HF_TOKEN": "hf_fake"}), patch("review_app.urllib.request.urlopen", return_value=ai_response) as request:
+                    ask_hugging_face(con, {}, "Summarize", "openai/gpt-oss-120b:cheapest", "summary")
+                ai_body = json.loads(request.call_args.args[0].data)
+                self.assertIn(comment, ai_body["messages"][1]["content"])
+
     def test_coverage_distinguishes_missing_unknown_and_failed_scans(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -37,6 +84,23 @@ class ReviewAppTests(unittest.TestCase):
             self.assertIsNone(result["clubs"][second]["missing"])
             self.assertEqual(result["clubs"][third]["state"], "error")
             self.assertEqual(result["date_quality"], {"estimated": 1, "exact": 1})
+
+    def test_shortened_text_needs_collection_even_when_counts_match(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            club = "gym-vilnius-mokslininku-g-6a"
+            source = root / "reviews.csv"
+            source.write_text("club_id,review_id,rating,published_at,text\n"
+                              f"{club},a,4,2026-10-01,Short … More\n", encoding="utf-8")
+            report = root / "scrape-report.json"
+            report.write_text(json.dumps({club: {"displayed_review_count": 1, "complete": True,
+                                                 "scraped_at": "2026-10-01T10:00:00Z"}}), encoding="utf-8")
+            with closing(connect(root / "reviews.sqlite3")) as con, patch("review_app.REPORT", report):
+                import_csv(con, source)
+                coverage = coverage_data(con)
+            self.assertEqual(coverage["clubs"][club]["state"], "shortened")
+            self.assertFalse(coverage["clubs"][club]["complete"])
+            self.assertEqual(coverage["shortened_reviews"], 1)
 
     def test_written_comment_filter_and_charts_share_the_same_scope(self):
         with tempfile.TemporaryDirectory() as folder:

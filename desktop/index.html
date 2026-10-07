@@ -12,15 +12,17 @@
   <header>
     <div class="title"><b>Lithuanian Gym Reviews</b><span id="status">Starting local dashboard…</span><span id="data-status">Checking archive…</span></div>
     <div class="actions">
-      <button id="collect" disabled>Collect missing</button>
+      <button id="collect" disabled>Collect gaps</button>
       <button id="refresh" disabled>Refresh all</button>
-      <button id="login" disabled>Maps sign-in</button>
-      <label class="size-control">Collector size <select id="collector-size"><option value="medium">Medium</option><option value="compact">Compact</option><option value="large">Large</option></select></label>
       <button id="finish-login" hidden>Finish sign-in</button>
       <button id="stop" hidden>Stop after this club</button>
-      <button id="import" disabled>Import CSV</button>
-      <button id="hf-token" disabled>Hugging Face token</button>
-      <button id="folder" disabled>Data folder</button>
+      <details class="tools-menu"><summary>Tools</summary><div class="tools-panel">
+        <button id="login" disabled>Maps sign-in</button>
+        <label class="size-control">Collector size <select id="collector-size"><option value="medium">Medium</option><option value="compact">Compact</option><option value="large">Large</option></select></label>
+        <button id="import" disabled>Import CSV</button>
+        <button id="hf-token" disabled>Hugging Face token</button>
+        <button id="folder" disabled>Data folder</button>
+      </div></details>
     </div>
   </header>
   <main><div id="loading">Starting the local dashboard…</div><iframe id="dashboard" title="Review dashboard" hidden></iframe></main>

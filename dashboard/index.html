@@ -49,7 +49,7 @@
         <div class="card-head"><h3>Club coverage</h3><button type="button" id="retry-problem-clubs" class="primary">Retry clubs needing attention</button></div>
         <p id="collection-progress-label" class="hint"></p><progress id="collection-progress" max="1" value="0"></progress>
         <div id="collection-state-counts" class="state-counts"></div>
-        <p class="hint">Progress counts clubs with a verified displayed review total. The displayed total can change as new reviews appear; a blank total means coverage is unknown.</p>
+        <p class="hint">Progress counts clubs whose saved review count meets the Maps total and whose saved text has no visible “More” previews. Maps totals can change; a blank total means coverage is unknown.</p>
         <p id="collection-action-status" role="status" class="hint"></p>
       </section>
       <section class="card collection-table-card"><div class="card-head"><h3>Clubs</h3><label class="collection-filter">Show <select id="collection-filter"><option value="all">All clubs</option><option value="attention">Need attention</option><option value="complete">Complete</option></select></label></div>
@@ -65,7 +65,7 @@
         <div class="ai-actions"><button id="ai-run" type="button" class="primary">Analyze selected reviews</button><span id="ai-status" class="hint">Use “Hugging Face token” in the desktop toolbar to connect your account.</span></div>
         <div id="ai-result" class="ai-result" hidden></div>
       </section>
-      <div class="card-head review-head"><h3>Reviews <span id="review-count" class="muted"></span></h3><a class="export" id="reviews-export" href="/export.csv">Export filtered reviews CSV</a></div>
+      <div class="card-head review-head"><h3>Reviews <span id="review-count" class="muted"></span></h3><div class="review-tools"><label>Translate to <select id="translation-language"><option value="en">English</option><option value="lt">Lithuanian</option></select></label><a class="export" id="reviews-export" href="/export.csv">Export filtered reviews CSV</a></div></div>
       <div id="reviews"></div>
       <div class="pager"><button id="previous" type="button">Previous</button><span id="page">Page 1</span><button id="next" type="button">Next</button></div>
     </section>

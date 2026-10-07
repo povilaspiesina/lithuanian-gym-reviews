@@ -1,6 +1,14 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { dateFromLabel, csv, recordFreshCards, gotoMaps, shouldSkipClub } = require('./maps_scraper');
+const { dateFromLabel, csv, recordFreshCards, gotoMaps, shouldSkipClub, saveBestCard } = require('./maps_scraper');
+
+test('a later shortened preview cannot replace saved full text', () => {
+  const rows = new Map();
+  saveBestCard(rows, {review_id:'a', text:'The full review.', owner_reply_text:'The full reply.'});
+  saveBestCard(rows, {review_id:'a', text:'The … More', owner_reply_text:'The … More'});
+  assert.equal(rows.get('a').text, 'The full review.');
+  assert.equal(rows.get('a').owner_reply_text, 'The full reply.');
+});
 
 test('relative review dates are marked estimated', () => {
   assert.deepEqual(dateFromLabel('2 weeks ago', new Date('2026-10-01T12:00:00Z')),

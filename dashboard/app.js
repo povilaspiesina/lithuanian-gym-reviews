@@ -104,20 +104,20 @@ function renderCoverage(coverage) {
   $('#collection-updated').textContent = label;
   const quality = coverage.date_quality || {};
   const estimated = quality.estimated || 0, unknown = quality.unknown || 0;
-  $('#overview-quality').textContent = `Across the archive, ${fmt(estimated)} reviews have estimated dates${unknown ? ` and ${fmt(unknown)} have unknown date precision` : ''}. Time charts and date filters use the stored dates. “Known missing” counts only clubs where Maps supplied a total; unknown coverage is never counted as zero.`;
+  $('#overview-quality').textContent = `Across the archive, ${fmt(estimated)} reviews have estimated dates${unknown ? ` and ${fmt(unknown)} have unknown date precision` : ''}; ${fmt(coverage.shortened_reviews || 0)} have shortened comment or reply text. Time charts and date filters use the stored dates. “Known missing” counts only clubs where Maps supplied a total; unknown coverage is never counted as zero.`;
   const entries = clubs.filter(c => c.status === 'open').map(c => ({ club: c, info: coverage.clubs[c.id] || {} }));
   entries.sort((a, b) => Number(a.info.complete) - Number(b.info.complete) || a.club.chain.localeCompare(b.club.chain));
   $('#coverage-list').innerHTML = entries.map(({club, info}) => {
     const count = info.collected || 0;
     const expected = info.displayed_review_count;
-    const state = info.state === 'unchecked' ? 'not checked' : info.state === 'error' ? 'error' : expected == null ? 'coverage unknown' : info.complete ? 'complete' : `${Math.max(expected-count,0)} missing`;
+    const state = info.state === 'unchecked' ? 'not checked' : info.state === 'error' ? 'error' : info.state === 'shortened' ? `${fmt(info.shortened_count)} shortened` : expected == null ? 'coverage unknown' : info.complete ? 'complete' : `${Math.max(expected-count,0)} missing`;
     const checked = info.scraped_at ? ` · checked ${esc(new Date(info.scraped_at).toLocaleDateString())}` : '';
     return `<div class="coverage-row"><span>${esc(club.chain)} · ${esc(club.club_name)} · ${esc(club.locality)}${checked}${info.last_error ? ` · ${esc(info.last_error)}` : ''}</span><b>${fmt(count)}/${expected == null ? '?' : fmt(expected)} · ${state}</b></div>`;
   }).join('');
 }
 
 function collectionStateLabel(state) {
-  return ({complete:'Complete', partial:'Partial', error:'Error', unchecked:'Not checked', unverified:'Coverage unknown'})[state] || 'Coverage unknown';
+  return ({complete:'Complete', partial:'Partial', error:'Error', unchecked:'Not checked', unverified:'Coverage unknown', shortened:'Text shortened'})[state] || 'Coverage unknown';
 }
 function renderCollection(coverage) {
   collectionData = coverage;
@@ -125,12 +125,12 @@ function renderCollection(coverage) {
   const states = coverage.states || {};
   $('#collection-progress').max = coverage.open || 1;
   $('#collection-progress').value = states.complete || 0;
-  $('#collection-progress-label').textContent = `${fmt(states.complete || 0)} of ${fmt(coverage.open)} open clubs have verified coverage · ${fmt(coverage.missing_known)} known reviews missing`;
+  $('#collection-progress-label').textContent = `${fmt(states.complete || 0)} of ${fmt(coverage.open)} open clubs have verified counts and full saved text · ${fmt(coverage.missing_known)} known reviews missing · ${fmt(coverage.shortened_reviews || 0)} shortened`;
   if (activeClubId && byId.has(activeClubId)) {
     const club = byId.get(activeClubId);
     $('#collection-progress-label').textContent += ` · Scanning ${club.chain} · ${club.club_name}`;
   }
-  $('#collection-state-counts').innerHTML = ['complete','partial','error','unchecked','unverified'].map(state => `<span class="status-pill ${state}">${collectionStateLabel(state)}: ${fmt(states[state] || 0)}</span>`).join('');
+  $('#collection-state-counts').innerHTML = ['complete','shortened','partial','error','unchecked','unverified'].map(state => `<span class="status-pill ${state}">${collectionStateLabel(state)}: ${fmt(states[state] || 0)}</span>`).join('');
   const filter = $('#collection-filter').value;
   const entries = clubs.filter(c => c.status === 'open').map(club => ({club, info: coverage.clubs[club.id] || {}}))
     .filter(({info}) => filter === 'all' || (filter === 'complete' ? info.state === 'complete' : info.state !== 'complete'))
@@ -138,7 +138,10 @@ function renderCollection(coverage) {
   $('#collection-rows').innerHTML = entries.map(({club,info}) => {
     const expected = info.displayed_review_count;
     const checked = info.scraped_at ? new Date(info.scraped_at).toLocaleString() : 'Never';
-    const detail = info.last_error || (info.state === 'unchecked' ? 'No collection recorded' : expected == null ? 'Maps total unavailable; completeness cannot be verified' : info.missing > 0 ? `${fmt(info.missing)} below Maps total` : 'Saved count meets Maps total');
+    const issues = [info.last_error, info.shortened_count ? `${fmt(info.shortened_count)} shortened reviews or replies` : '',
+      info.missing > 0 ? `${fmt(info.missing)} below Maps total` : ''].filter(Boolean);
+    const detail = issues.join(' · ') || (info.state === 'unchecked' ? 'No collection recorded' :
+      expected == null ? 'Maps total unavailable; completeness cannot be verified' : 'Saved count meets Maps total');
     return `<tr><td><b>${esc(club.chain)} · ${esc(club.club_name)}</b><div class="subtle">${esc(club.locality)}</div></td><td><span class="status-pill ${club.id === activeClubId ? 'scanning' : esc(info.state)}">${club.id === activeClubId ? 'Scanning' : collectionStateLabel(info.state)}</span></td><td>${fmt(info.collected || 0)} / ${expected == null ? 'Unknown' : fmt(expected)}</td><td>${esc(checked)}</td><td class="collection-detail">${esc(detail)}</td><td><button type="button" class="retry-club" data-retry-club="${esc(club.id)}">${info.state === 'complete' ? 'Refresh' : 'Retry'}</button></td></tr>`;
   }).join('') || '<tr><td colspan="6">No clubs in this view.</td></tr>';
 }
@@ -243,15 +246,50 @@ function renderReviews(data) {
     const club = byId.get(row.club_id);
     const heading = `${esc(club.chain)} · ${esc(club.club_name)} <span class="stars">${'★'.repeat(row.rating)}</span>`;
     if (!row.text.trim()) return `<article class="review rating-only"><h3>${heading}</h3></article>`;
-    const meta = `${esc(club.locality)} · ${row.date_precision === 'estimated' ? 'about ' : ''}${esc(row.published_at)}${row.published_label ? ` (${esc(row.published_label)})` : ''}${row.author ? ` · ${esc(row.author)}` : ''}${row.review_url ? ` · <a href="${esc(row.review_url)}" target="_blank" rel="noopener noreferrer">Source</a>` : ''}`;
-    const reply = row.owner_reply_text ? `<div class="reply"><b>Owner reply</b>${row.owner_reply_at ? ` · ${esc(row.owner_reply_at)}` : ''}<p>${esc(row.owner_reply_text)}</p></div>` : '';
-    return `<article class="review"><h3>${heading}</h3><div class="meta">${meta}</div><p>${esc(row.text)}</p>${reply}</article>`;
+    const directLink = row.review_url && (row.review_url.includes(row.review_id) || row.review_url.includes('/maps/reviews/data='));
+    const linkLabel = directLink ? 'Review on Maps' : 'Club on Maps';
+    const meta = `${esc(club.locality)} · ${row.date_precision === 'estimated' ? 'about ' : ''}${esc(row.published_at)}${row.published_label ? ` (${esc(row.published_label)})` : ''}${row.author ? ` · ${esc(row.author)}` : ''}${row.review_url ? ` · <a href="${esc(row.review_url)}" target="_blank" rel="noopener noreferrer">${linkLabel}</a>` : ''}`;
+    const reply = row.owner_reply_text ? `<div class="reply"><b>Owner reply</b>${row.owner_reply_at ? ` · ${esc(row.owner_reply_at)}` : ''}<p class="reply-text">${esc(row.owner_reply_text)}</p></div>` : '';
+    const shortened = /(?:…|\.\.\.)\s*(?:More|Daugiau)$/i.test(row.text) || /(?:…|\.\.\.)\s*(?:More|Daugiau)$/i.test(row.owner_reply_text || '');
+    return `<article class="review" data-club-id="${esc(row.club_id)}" data-review-id="${esc(row.review_id)}"><h3>${heading}</h3><div class="meta">${meta}</div><p class="review-text">${esc(row.text)}</p>${reply}${shortened ? '<p class="shortened-note">Saved text appears shortened. Refresh this club to collect the full comment and reply.</p>' : ''}<div class="review-actions"><button type="button" class="translate-button" ${shortened ? 'disabled title="Refresh this club before translating"' : ''}>Translate</button><span class="translation-status" role="status"></span></div></article>`;
   }).join('') : '<p class="muted">No reviews match these filters.</p>';
   $('#page').textContent = `Page ${Math.floor(reviewOffset/50)+1} · ${fmt(count)} results`;
   $('#previous').disabled = reviewOffset === 0;
   $('#next').disabled = reviewOffset + 50 >= count;
   $('#reviews-export').href = '/export.csv?' + query($('#review-filters'));
   renderCoverage(data.coverage);
+}
+async function translateCard(button) {
+  const card = button.closest('.review');
+  const clubId = card.dataset.clubId, reviewId = card.dataset.reviewId;
+  const row = reviewData?.reviews.find(item => item.club_id === clubId && item.review_id === reviewId);
+  if (!row) return;
+  const status = card.querySelector('.translation-status');
+  if (button.dataset.translated === '1') {
+    card.querySelector('.review-text').textContent = row.text;
+    if (row.owner_reply_text) card.querySelector('.reply-text').textContent = row.owner_reply_text;
+    button.dataset.translated = '';
+    button.textContent = 'Show translation';
+    status.textContent = '';
+    return;
+  }
+  button.disabled = true;
+  status.textContent = 'Translating…';
+  try {
+    const response = await fetch('/api/translate', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({club_id:clubId, review_id:reviewId,
+        target_language:$('#translation-language').value, model:$('#ai-model').value.trim()}),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Translation failed');
+    card.querySelector('.review-text').textContent = result.text;
+    if (row.owner_reply_text) card.querySelector('.reply-text').textContent = result.reply;
+    button.dataset.translated = '1';
+    button.textContent = 'Show original';
+    status.textContent = `${$('#translation-language').selectedOptions[0].text} translation${result.cached ? ' · saved locally' : ''}`;
+  } catch (error) { status.textContent = error.message; }
+  finally { button.disabled = false; }
 }
 async function loadReviews() {
   try { reviewData = await fetchData($('#review-filters'), reviewOffset); renderReviews(reviewData); }
@@ -306,6 +344,11 @@ document.querySelector('[data-export="clubs"]').addEventListener('click', export
 $('#previous').onclick = () => { reviewOffset = Math.max(0, reviewOffset - 50); loadReviews(); };
 $('#next').onclick = () => { reviewOffset += 50; loadReviews(); };
 $('#ai-run').onclick = askAI;
+$('#reviews').onclick = event => {
+  const button = event.target.closest('.translate-button');
+  if (button) translateCard(button);
+};
+$('#translation-language').onchange = () => { if (reviewData) renderReviews(reviewData); };
 $('#ai-mode').onchange = () => {
   if ($('#ai-mode').value === 'issues') $('#ai-question').value = 'Summarize the main recurring issues. Include concrete examples with review IDs.';
   else if ($('#ai-mode').value === 'summary') $('#ai-question').value = 'Summarize the main positive and negative themes. Include concrete examples with review IDs.';

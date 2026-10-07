@@ -210,17 +210,31 @@ async function clickReviews(page) {
 }
 
 async function expandVisibleReviews(page) {
-  // Google Maps also has a generic "More" control on reviewer profiles. Clicking
-  // that repeatedly opens contributor tabs, so only use the review expansion action.
-  await page.locator(reviewSelector()).evaluateAll(cards => {
-    for (const card of cards) {
-      for (const button of card.querySelectorAll('button[jsaction*="Original"], button[jsaction*="expandReview"]')) {
-        if (button.dataset.scraperExpanded) continue;
-        button.dataset.scraperExpanded = '1';
-        button.click();
+  // Only click controls inside a review's text or owner reply. Generic "More"
+  // controls on contributor profiles can open new tabs.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const clicked = await page.locator(reviewSelector()).evaluateAll(cards => {
+      let count = 0;
+      for (const card of cards) {
+        for (const button of card.querySelectorAll('button')) {
+          if (button.dataset.scraperExpanded) continue;
+          const action = button.getAttribute('jsaction') || '';
+          const label = (button.getAttribute('aria-label') || button.innerText || '').trim();
+          const recognized = /expandReview|expandResponse|review\.more|Original/i.test(action) ||
+            (button.classList.contains('w8nwRe') && /^(More|Daugiau|Read more|Show more)$/i.test(label));
+          if (!recognized) continue;
+          const area = button.closest('.wiI7pd, .MyEned, .CDe7pd') || button.parentElement;
+          if (!area?.querySelector('.wiI7pd, .MyEned') && !area?.matches('.wiI7pd, .MyEned')) continue;
+          button.dataset.scraperExpanded = '1';
+          button.click();
+          count++;
+        }
       }
-    }
-  });
+      return count;
+    });
+    if (!clicked) break;
+    await page.waitForTimeout(120);
+  }
 }
 function reviewSelector() { return '.jftiEf[data-review-id]'; }
 
@@ -249,17 +263,24 @@ async function extractCards(page, club, placeUrl) {
   const raw = await page.locator(reviewSelector()).evaluateAll(cards => cards.map(card => {
     const one = selector => card.querySelector(selector);
     const text = selector => one(selector)?.innerText?.trim() || '';
-    const reviewText = [...card.querySelectorAll('.wiI7pd, .MyEned')]
-      .find(node => !node.closest('.CDe7pd'))?.innerText?.trim() || '';
+    const longest = nodes => nodes.map(node => node.innerText?.trim() || '').sort((a, b) => b.length - a.length)[0] || '';
+    const reviewText = longest([...card.querySelectorAll('.wiI7pd, .MyEned')]
+      .filter(node => !node.closest('.CDe7pd')));
+    const replyText = longest([...card.querySelectorAll('.CDe7pd .wiI7pd, .CDe7pd .MyEned')]);
+    const id = card.getAttribute('data-review-id') || one('[data-review-id]')?.getAttribute('data-review-id') || '';
+    const directLink = [...card.querySelectorAll('a[href]')].map(link => link.href)
+      .find(url => url.startsWith('https://www.google.com/maps/') &&
+        (url.includes(encodeURIComponent(id)) || url.includes(id) || url.includes('/maps/reviews/data='))) || '';
     const ratingLabel = one('.kvMYJc, [role="img"][aria-label*="star"], [role="img"][aria-label*="žvaig"]')?.getAttribute('aria-label') || '';
     return {
-      review_id: card.getAttribute('data-review-id') || one('[data-review-id]')?.getAttribute('data-review-id') || '',
+      review_id: id,
       author: text('.d4r55, .WNxzHc'),
       rating_label: ratingLabel,
       published_label: text('.rsqaWe, .xRkPPb'),
       text: reviewText,
-      owner_reply_text: text('.CDe7pd .wiI7pd, .CDe7pd .MyEned'),
+      owner_reply_text: replyText,
       owner_reply_at: text('.CDe7pd .rsqaWe'),
+      direct_review_url: directLink,
     };
   }));
   return raw.map(item => {
@@ -269,7 +290,7 @@ async function extractCards(page, club, placeUrl) {
       club_id: club.id, review_id: item.review_id, rating: Math.round(rating),
       published_at: date.date, published_label: item.published_label,
       date_precision: date.precision, text: item.text, author: item.author,
-      review_url: placeUrl, owner_reply_text: item.owner_reply_text,
+      review_url: item.direct_review_url || placeUrl, owner_reply_text: item.owner_reply_text,
       owner_reply_at: dateFromLabel(item.owner_reply_at).date,
     };
   }).filter(item => item.review_id && item.rating >= 1 && item.rating <= 5 && item.published_at);
@@ -310,6 +331,18 @@ function recordFreshCards(rows, collected, seen, knownIds, knownStreak = 0) {
     knownStreak = knownIds.has(row.review_id) ? knownStreak + 1 : 0;
   }
   return knownStreak;
+}
+function saveBestCard(collected, row) {
+  const previous = collected.get(row.review_id);
+  if (previous) {
+    for (const field of ['text', 'owner_reply_text']) {
+      if (/(?:…|\.\.\.)\s*(?:More|Daugiau)$/i.test(row[field] || '') &&
+          !/(?:…|\.\.\.)\s*(?:More|Daugiau)$/i.test(previous[field] || '') && previous[field]) {
+        row[field] = previous[field];
+      }
+    }
+  }
+  collected.set(row.review_id, row);
 }
 
 async function scrapePlace(page, club, placeUrl, maxReviews, sortPreference, knownIds = null) {
@@ -367,7 +400,7 @@ async function scrapePlace(page, club, placeUrl, maxReviews, sortPreference, kno
       if (knownIds) {
         const fresh = visible.filter(row => !seen.has(row.review_id));
         if (fresh.length) knownStreak = recordFreshCards(fresh, collected, seen, knownIds, knownStreak);
-      } else for (const row of visible) collected.set(row.review_id, row);
+      } else for (const row of visible) saveBestCard(collected, row);
       duplicateSteps = collected.size === previousUnique ? duplicateSteps + 1 : 0;
       previousUnique = collected.size;
       if (step % 10 === 0 || duplicateSteps === 15) console.log(`${club.id} [${sort}]: ${collected.size} unique reviews`);
@@ -382,7 +415,7 @@ async function scrapePlace(page, club, placeUrl, maxReviews, sortPreference, kno
       if (knownIds) {
         const fresh = afterScroll.filter(row => !seen.has(row.review_id));
         if (fresh.length) knownStreak = recordFreshCards(fresh, collected, seen, knownIds, knownStreak);
-      } else for (const row of afterScroll) collected.set(row.review_id, row);
+      } else for (const row of afterScroll) saveBestCard(collected, row);
       const afterCards = await page.locator(reviewSelector()).count();
       stagnant = afterCards === beforeCards ? stagnant + 1 : 0;
       if (stagnant > 0) console.log(`${club.id} [${sort}]: no new cards (${stagnant}), ${afterCards} cards, scroll ${scroll.top}/${scroll.height}`);
@@ -481,6 +514,9 @@ async function main() {
           if (!knownIds.size) knownIds = null;
         }
         const { rows, expected, crashed, stopped, scanVerified } = await scrapePlace(page, club, placeUrl, a.max, a.sort, knownIds);
+        const shortenedTextCount = rows.filter(row =>
+          /(?:…|\.\.\.)\s*(?:More|Daugiau)$/i.test(row.text || '') ||
+          /(?:…|\.\.\.)\s*(?:More|Daugiau)$/i.test(row.owner_reply_text || '')).length;
         if (!rows.length && expected !== 0 && !stopped) throw new Error('No review cards were parsed');
         let stored;
         if (rows.length) {
@@ -498,7 +534,8 @@ async function main() {
         }
         report[club.id] = {
           collected: stored, collected_this_run: rows.length, displayed_review_count: expected,
-          complete: expected !== null && stored >= expected && scanVerified !== false,
+          complete: expected !== null && stored >= expected && scanVerified !== false && shortenedTextCount === 0,
+          shortened_text_count: shortenedTextCount,
           last_error: scanVerified === false ? 'Recent review scan ended before reaching saved reviews' : '',
           scraped_at: new Date().toISOString(), place_url: placeUrl,
         };
@@ -506,7 +543,7 @@ async function main() {
         if (!report[club.id].complete) {
           await page.screenshot({ path: path.join(DATA, `incomplete_${club.id}.png`), fullPage: false }).catch(() => {});
         }
-        console.log(`${club.id}: coverage ${stored}/${expected ?? '?'}${report[club.id].complete ? ' complete' : ' unverified'}`);
+        console.log(`${club.id}: coverage ${stored}/${expected ?? '?'}${report[club.id].complete ? ' complete' : ' unverified'}${shortenedTextCount ? `; ${shortenedTextCount} shortened comments or replies` : ''}`);
         total += rows.length;
         consecutiveFailures = report[club.id].complete ? 0 : consecutiveFailures + 1;
         if (crashed) {
@@ -546,4 +583,5 @@ async function main() {
 }
 
 if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });
-module.exports = { dateFromLabel, csv, recordFreshCards, gotoMaps, shouldSkipClub };
+module.exports = { dateFromLabel, csv, recordFreshCards, gotoMaps, shouldSkipClub,
+  expandVisibleReviews, extractCards, saveBestCard };

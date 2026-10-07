@@ -86,8 +86,8 @@ window.gymApp.on('app-error', message => { appendLog(message); $('status').textC
 window.gymApp.on('data-summary', data => {
   const coverage = data.coverage;
   const date = coverage.last_imported;
-  const when = date ? new Date(date).toLocaleString() : 'unknown';
-  $('data-status').textContent = `${data.review_count.toLocaleString()} reviews · ${coverage.complete}/${coverage.open} clubs complete · ${coverage.missing_known.toLocaleString()} known missing · ${coverage.failed} errors · updated ${when}`;
+  const when = date ? new Date(date).toLocaleDateString() : 'unknown';
+  $('data-status').textContent = `${data.review_count.toLocaleString()} reviews · ${coverage.complete}/${coverage.open} clubs complete · updated ${when}`;
 });
 window.gymApp.on('reload-dashboard', () => { if ($('dashboard').src) $('dashboard').contentWindow.location.reload(); });
 window.addEventListener('message', async event => {

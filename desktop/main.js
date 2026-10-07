@@ -179,11 +179,21 @@ function startCollector(mode, clubId = '', clubIds = []) {
 }
 
 ipcMain.handle('dashboard-url', () => dashboardUrl);
-ipcMain.handle('collector-start', (_event, request) => {
+ipcMain.handle('collector-start', async (_event, request) => {
   const mode = typeof request === 'string' ? request : request?.mode;
   const clubId = typeof request === 'object' ? request?.clubId : '';
   const clubIds = typeof request === 'object' ? request?.clubIds : undefined;
   if (!['missing', 'attention', 'refresh', 'login', 'club'].includes(mode)) return { ok: false, message: 'Invalid action.' };
+  if (mode === 'missing') {
+    try {
+      const response = await fetch(dashboardUrl + '/api/status');
+      if (!response.ok) throw new Error('Could not read collection status');
+      const coverage = (await response.json()).coverage;
+      const ids = Object.entries(coverage.clubs).filter(([, entry]) => !entry.complete).map(([id]) => id);
+      if (!ids.length) return { ok: false, message: 'All open clubs have verified counts and full saved text.' };
+      return startCollector('attention', '', ids);
+    } catch (error) { return { ok: false, message: error.message }; }
+  }
   if (mode === 'club' || mode === 'attention') {
     const directory = JSON.parse(fs.readFileSync(resource('gyms_lt.json'), 'utf8'));
     const openIds = new Set(directory.clubs.filter(club => club.status === 'open').map(club => club.id));
