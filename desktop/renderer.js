@@ -3,7 +3,6 @@ let running = false;
 let mode = '';
 let setupShown = false;
 let issueCount = 0;
-let needsGithubSetup = false;
 let updateOnStartup = false;
 
 function setControls() {
@@ -34,11 +33,8 @@ function dashboardReady(url) {
     window.gymApp.setup().then(info => {
       $('collector-size').value = info.collectorSize;
       $('check-updates').hidden = !info.updatesSupported;
-      $('github-token').hidden = !info.updatesSupported;
-      needsGithubSetup = info.updatesSupported && !info.githubTokenConfigured;
-      updateOnStartup = info.updatesSupported && info.githubTokenConfigured;
+      updateOnStartup = info.updatesSupported;
       if (info.needsSignIn) $('signin-dialog').showModal();
-      else if (needsGithubSetup) $('github-dialog').showModal();
       else if (updateOnStartup) checkUpdates(false);
     });
   }
@@ -55,33 +51,18 @@ $('login').onclick = () => start('login');
 $('finish-login').onclick = async () => {
   const result = await window.gymApp.finishLogin();
   if (result.ok) appendLog('Maps sign-in confirmed. You can now collect or refresh reviews.');
-  if (result.ok && needsGithubSetup) $('github-dialog').showModal();
-  else if (result.ok && updateOnStartup) checkUpdates(false);
+  if (result.ok && updateOnStartup) checkUpdates(false);
 };
 $('signin-now').onclick = () => { $('signin-dialog').close(); start('login'); };
 $('signin-later').onclick = () => {
   $('signin-dialog').close();
-  if (needsGithubSetup) $('github-dialog').showModal();
-  else if (updateOnStartup) checkUpdates(false);
+  if (updateOnStartup) checkUpdates(false);
 };
 async function checkUpdates(manual) {
   const result = await window.gymApp.checkUpdates(manual);
-  if (result.needsToken) $('github-dialog').showModal();
-  else if (result.message) appendLog(result.message);
+  if (result.message) appendLog(result.message);
 }
 $('check-updates').onclick = () => checkUpdates(true);
-$('github-token').onclick = () => { $('github-input').value = ''; $('github-message').textContent = ''; $('github-dialog').showModal(); };
-$('github-later').onclick = () => $('github-dialog').close();
-$('github-save').onclick = async () => {
-  const result = await window.gymApp.setGithubToken($('github-input').value.trim());
-  $('github-message').textContent = result.message;
-  if (result.ok) { needsGithubSetup = false; $('github-input').value = ''; $('github-dialog').close(); checkUpdates(true); }
-};
-$('github-remove').onclick = async () => {
-  const result = await window.gymApp.setGithubToken('');
-  $('github-message').textContent = result.message;
-  if (result.ok) { needsGithubSetup = true; $('github-dialog').close(); appendLog(result.message); }
-};
 $('collector-size').onchange = async () => {
   const result = await window.gymApp.setCollectorSize($('collector-size').value);
   if (!result.ok) appendLog(result.message);

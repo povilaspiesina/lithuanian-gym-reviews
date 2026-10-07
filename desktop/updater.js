@@ -29,29 +29,28 @@ function installerFor(release) {
   return { version: release.tag_name.replace(/^v/, ''), name: expected, id: asset.id,
     size: asset.size, digest: asset.digest.slice(7).toLowerCase() };
 }
-async function githubFetch(url, token, accept, fetchImpl = fetch) {
+async function githubFetch(url, accept, fetchImpl = fetch) {
   const response = await fetchImpl(url, { headers: {
-    Accept: accept, Authorization: `Bearer ${token}`, 'User-Agent': 'lithuanian-gym-reviews',
+    Accept: accept, 'User-Agent': 'lithuanian-gym-reviews',
     'X-GitHub-Api-Version': '2022-11-28',
   }, redirect: 'manual', signal: AbortSignal.timeout(30000) });
-  if (response.status === 401 || response.status === 403 || response.status === 404) {
-    throw new Error('GitHub could not access the private release. Check the token and its Contents: read permission.');
-  }
+  if (response.status === 403) throw new Error('GitHub update checks are temporarily rate limited. Try again later.');
+  if (response.status === 404) throw new Error('No published GitHub release was found.');
   if (!response.ok && (response.status < 300 || response.status >= 400)) throw new Error(`GitHub update request failed (${response.status}).`);
   return response;
 }
-async function latestRelease(token, fetchImpl = fetch) {
-  const response = await githubFetch(`${API}/releases/latest`, token, 'application/vnd.github+json', fetchImpl);
+async function latestRelease(fetchImpl = fetch) {
+  const response = await githubFetch(`${API}/releases/latest`, 'application/vnd.github+json', fetchImpl);
   if (response.status !== 200) throw new Error('Unexpected GitHub release response.');
   return response.json();
 }
-async function downloadInstaller(asset, token, destination, fetchImpl = fetch) {
+async function downloadInstaller(asset, destination, fetchImpl = fetch) {
   const target = path.resolve(destination);
   const temporary = `${target}.part`;
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.rmSync(temporary, { force: true });
   try {
-    let response = await githubFetch(`${API}/releases/assets/${asset.id}`, token, 'application/octet-stream', fetchImpl);
+    let response = await githubFetch(`${API}/releases/assets/${asset.id}`, 'application/octet-stream', fetchImpl);
     for (let hops = 0; response.status >= 300 && response.status < 400; hops++) {
       if (hops >= 4) throw new Error('Too many GitHub download redirects.');
       const location = response.headers.get('location');

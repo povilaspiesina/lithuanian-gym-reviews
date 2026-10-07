@@ -18,10 +18,6 @@ function settings() {
 }
 function saveSettings(value) { fs.writeFileSync(settingsFile(), JSON.stringify({ ...settings(), ...value }, null, 2)); }
 function tokenFile() { return path.join(app.getPath('userData'), 'hf-token.enc'); }
-function githubTokenFile() { return path.join(app.getPath('userData'), 'github-token.enc'); }
-function githubToken() {
-  try { return safeStorage.decryptString(fs.readFileSync(githubTokenFile())); } catch { return ''; }
-}
 function hfToken() {
   try { return safeStorage.decryptString(fs.readFileSync(tokenFile())); } catch { return ''; }
 }
@@ -216,27 +212,14 @@ ipcMain.handle('collector-finish-login', () => {
 });
 ipcMain.handle('setup-status', () => ({ needsSignIn: !signedInOnce(), tokenConfigured: Boolean(hfToken()),
   updatesSupported: app.isPackaged && process.platform === 'win32',
-  githubTokenConfigured: Boolean(githubToken()), collectorSize: settings().collectorSize || 'medium' }));
-ipcMain.handle('github-set-token', (_event, token) => {
-  if (typeof token !== 'string' || token.length > 300 || (token && !/^(github_pat_|ghp_)[A-Za-z0-9_]+$/.test(token))) {
-    return { ok: false, message: 'Enter a GitHub personal access token for this repository.' };
-  }
-  if (token && !safeStorage.isEncryptionAvailable()) return { ok: false, message: 'Secure token storage is unavailable on this computer.' };
-  try {
-    if (token) fs.writeFileSync(githubTokenFile(), safeStorage.encryptString(token), { mode: 0o600 });
-    else fs.rmSync(githubTokenFile(), { force: true });
-    return { ok: true, message: token ? 'Private release access saved securely.' : 'GitHub token removed.' };
-  } catch (error) { return { ok: false, message: `Could not save token: ${error.message}` }; }
-});
+  collectorSize: settings().collectorSize || 'medium' }));
 let updateCheckRunning = false;
 ipcMain.handle('check-updates', async (_event, manual = false) => {
   if (process.platform !== 'win32' || !app.isPackaged) return { ok: false, message: 'In-app installation is available in the packaged Windows app.' };
   if (updateCheckRunning) return { ok: false, message: 'An update check is already running.' };
-  const token = githubToken();
-  if (!token) return { ok: false, needsToken: true, message: 'Add private GitHub release access to check for updates.' };
   updateCheckRunning = true;
   try {
-    const release = await updater.latestRelease(token);
+    const release = await updater.latestRelease();
     const asset = updater.installerFor(release);
     if (!asset || !updater.newerVersion(asset.version, app.getVersion())) {
       return { ok: true, message: manual ? `Version ${app.getVersion()} is up to date.` : '' };
@@ -251,7 +234,7 @@ ipcMain.handle('check-updates', async (_event, manual = false) => {
     if (choice.response !== 0) return { ok: true, message: 'Update postponed.' };
     send('update-status', `Downloading version ${asset.version}…`);
     const destination = path.join(app.getPath('userData'), 'updates', asset.name);
-    const installer = await updater.downloadInstaller(asset, token, destination);
+    const installer = await updater.downloadInstaller(asset, destination);
     send('update-status', 'Opening installer…');
     const launchError = await shell.openPath(installer);
     if (launchError) throw new Error(`Could not open installer: ${launchError}`);
@@ -309,6 +292,8 @@ ipcMain.handle('import-csv', async () => {
 });
 
 app.whenReady().then(() => {
+  // Older private-repository builds stored a token that public updates no longer need.
+  try { fs.rmSync(path.join(app.getPath('userData'), 'github-token.enc'), { force: true }); } catch { /* No update credentials are used. */ }
   createWindow();
   ensureStarterArchive();
   startBackend();

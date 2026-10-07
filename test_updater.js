@@ -27,34 +27,32 @@ test('release selection requires a verified Windows installer', () => {
   assert.equal(installerFor({ ...release, assets: [{ ...release.assets[0], name: 'other.exe' }] }), null);
 });
 
-test('private release request uses authorization and reports access failures without exposing token', async () => {
-  const secret = 'github_pat_secret';
+test('public release request needs no token and handles rate limits', async () => {
   let headers;
   const fakeFetch = async (_url, options) => { headers = options.headers; return Response.json(release); };
-  assert.deepEqual(await latestRelease(secret, fakeFetch), release);
-  assert.equal(headers.Authorization, `Bearer ${secret}`);
-  await assert.rejects(latestRelease(secret, async () => new Response('', { status: 403 })), error =>
-    !error.message.includes(secret) && /permission/.test(error.message));
+  assert.deepEqual(await latestRelease(fakeFetch), release);
+  assert.equal(headers.Authorization, undefined);
+  await assert.rejects(latestRelease(async () => new Response('', { status: 403 })), /rate limited/);
 });
 
-test('download verifies size and checksum, and never forwards token to redirected asset host', async () => {
+test('download verifies size and checksum without requiring a token', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gym-update-'));
   const destination = path.join(dir, name);
   try {
     let redirectedOptions;
     const fakeFetch = async (url, options) => {
       if (String(url).includes('/releases/assets/')) {
-        assert.match(options.headers.Authorization, /^Bearer /);
+        assert.equal(options.headers.Authorization, undefined);
         return new Response(null, { status: 302, headers: { location: 'https://release-assets.githubusercontent.com/example' } });
       }
       redirectedOptions = options;
       return new Response(bytes, { status: 200, headers: { 'content-type': 'application/octet-stream' } });
     };
-    assert.equal(await downloadInstaller(installerFor(release), 'secret', destination, fakeFetch), destination);
+    assert.equal(await downloadInstaller(installerFor(release), destination, fakeFetch), destination);
     assert.deepEqual(fs.readFileSync(destination), bytes);
     assert.equal(redirectedOptions.headers, undefined);
     fs.rmSync(destination);
-    await assert.rejects(downloadInstaller({ ...installerFor(release), digest: '0'.repeat(64) }, 'secret', destination, fakeFetch), /checksum/);
+    await assert.rejects(downloadInstaller({ ...installerFor(release), digest: '0'.repeat(64) }, destination, fakeFetch), /checksum/);
     assert.equal(fs.existsSync(destination), false);
     assert.equal(fs.existsSync(`${destination}.part`), false);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
@@ -65,9 +63,9 @@ test('incomplete or unexpected downloads never leave an installable file', async
   try {
     const destination = path.join(dir, name);
     const item = installerFor(release);
-    await assert.rejects(downloadInstaller(item, 'secret', destination, async () => new Response(bytes.subarray(0, 4))), /incomplete/);
+    await assert.rejects(downloadInstaller(item, destination, async () => new Response(bytes.subarray(0, 4))), /incomplete/);
     assert.equal(fs.existsSync(destination), false);
-    await assert.rejects(downloadInstaller(item, 'secret', destination, async () =>
+    await assert.rejects(downloadInstaller(item, destination, async () =>
       new Response(null, { status: 302, headers: { location: 'https://example.com/installer.exe' } })), /location/);
     assert.equal(fs.existsSync(`${destination}.part`), false);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
