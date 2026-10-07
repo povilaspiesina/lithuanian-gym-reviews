@@ -1,12 +1,12 @@
 {
   "name": "lithuanian-gym-reviews",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "private": true,
   "description": "Local Lithuanian gym review collector and dashboard",
   "main": "desktop/main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test test_maps_scraper.js",
+    "test": "node --test test_*.js",
     "dist:win": "electron-builder --win nsis zip --x64 --publish never"
   },
   "dependencies": {
