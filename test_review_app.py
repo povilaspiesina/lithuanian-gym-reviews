@@ -19,6 +19,9 @@ class ReviewAppTests(unittest.TestCase):
             answer = enforce_english_answer(chinese, "openai/gpt-oss-20b:cheapest", "hf_fake", "en")
         self.assertEqual(answer, "Equipment maintenance and cleanliness recur.")
         self.assertIn("entirely in English", chat.call_args.args[0]["messages"][0]["content"])
+        with patch("review_app.hugging_face_chat", return_value=chinese):
+            with self.assertRaisesRegex(ValueError, "still answered in Chinese"):
+                enforce_english_answer(chinese, "openai/gpt-oss-20b:cheapest", "hf_fake", "en")
 
     def test_full_analysis_batches_cover_each_comment_and_request_english(self):
         with tempfile.TemporaryDirectory() as folder:

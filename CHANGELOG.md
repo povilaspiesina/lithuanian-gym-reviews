@@ -11,7 +11,7 @@ Add a `## vX.Y.Z` section before creating each version tag. The Windows release 
 - Manual update checks show a small progress window. The Windows app also checks automatically on launch and every 12 hours while it remains open.
 
 ### Changed
-- AI answers render as formatted Markdown with unsafe HTML removed. Substantial Chinese output is rewritten in English when English is selected.
+- AI answers render as formatted Markdown with unsafe HTML removed. Substantial Chinese output is rewritten in English when English is selected; the app reports a clear model error if a rewrite still ignores that language choice.
 - Overview and Reviews & AI are adjacent in navigation and share filter choices when switching. Collection now holds the club coverage metrics and details.
 - Average rating trend lines connect rated periods across gaps in the data.
 - The sample analysis status clearly distinguishes comments analyzed from all eligible comments.

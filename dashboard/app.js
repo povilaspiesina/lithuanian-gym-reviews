@@ -11,14 +11,14 @@ let savedPrompts = [];
 let activeView = 'overview';
 let cancelAnalysis = false;
 const aiPresets = {
-  issues: {mode:'issues', prompt:'Group recurring problems in these reviews. For each theme, give a concise explanation and cite review IDs and author names when available. Separate common patterns from isolated reports, and do not infer prevalence beyond this sample.'},
+  issues: {mode:'issues', prompt:'Group recurring problems in these reviews. For each theme, give a concise explanation and cite review IDs and author names when available. Separate common patterns from isolated reports, and do not infer prevalence beyond the selected reviews.'},
   actions: {mode:'issues', prompt:'Recommend the three most practical improvements the gyms could make based on these negative reviews. For each, describe the customer problem, a concrete action, and supporting review IDs with author names when available. Say when evidence is sparse.'},
-  billing: {mode:'issues', prompt:'Examine membership terms, cancellation, charges, and billing complaints in this sample. Identify distinct issues and cite review IDs and author names when available. If the sample has no relevant complaints, say so. Do not make legal conclusions.'},
+  billing: {mode:'issues', prompt:'Examine membership terms, cancellation, charges, and billing complaints in the selected reviews. Identify distinct issues and cite review IDs and author names when available. If none of the selected reviews contains a relevant complaint, say so. Do not make legal conclusions.'},
   strengths: {mode:'summary', prompt:'What do members value most in these gyms? Group positive themes and cite representative review IDs and author names when available. Distinguish repeated praise from one-off comments.'},
-  replies: {mode:'summary', prompt:'Assess the owner replies present in this sample. Which concerns receive a specific response, and which replies are generic or leave the concern unresolved? Cite review IDs and author names when available. Do not judge reviews without a reply as if they were answered.'},
-  recent: {mode:'summary', prompt:'Summarize what reviewers say in the selected date period. Highlight positive and negative themes with review IDs and author names when available. Note that Google Maps dates may be estimated and do not claim a trend unless the supplied sample supports it.'},
-  compare: {mode:'summary', prompt:'Compare the chains or clubs represented in this sample. Describe differences supported by the reviews, cite review IDs and author names when available, and state when a club has too few sampled comments for a useful comparison.'},
-  brief: {mode:'summary', prompt:'Write a short management brief with strengths, recurring problems, owner response gaps, and two practical next actions. Cite review IDs and author names when available. Keep conclusions limited to this sample.'},
+  replies: {mode:'summary', prompt:'Assess the owner replies present in the selected reviews. Which concerns receive a specific response, and which replies are generic or leave the concern unresolved? Cite review IDs and author names when available. Do not judge reviews without a reply as if they were answered.'},
+  recent: {mode:'summary', prompt:'Summarize what reviewers say in the selected date period. Highlight positive and negative themes with review IDs and author names when available. Note that Google Maps dates may be estimated and do not claim a trend unless the selected reviews support it.'},
+  compare: {mode:'summary', prompt:'Compare the chains or clubs represented in the selected reviews. Describe differences supported by the reviews, cite review IDs and author names when available, and state when a club has too few selected comments for a useful comparison.'},
+  brief: {mode:'summary', prompt:'Write a short management brief with strengths, recurring problems, owner response gaps, and two practical next actions. Cite review IDs and author names when available. Keep conclusions limited to the selected reviews.'},
   question: {mode:'question', prompt:''},
 };
 const presetDetails = {
@@ -28,9 +28,9 @@ const presetDetails = {
   strengths:['What members value','Summarize positive feedback.'],
   replies:['Owner reply quality','Assess how clubs respond to concerns.'],
   recent:['Recent changes','Summarize the selected date period.'],
-  compare:['Compare selected clubs','Contrast chains or clubs in the filtered sample.'],
+  compare:['Compare selected clubs','Contrast chains or clubs in the filtered reviews.'],
   brief:['Management brief','Create a short decision-ready summary.'],
-  question:['New blank prompt','Write your own question about the sample.'],
+  question:['New blank prompt','Write your own question about the selected reviews.'],
 };
 
 function selectedPreset() {
@@ -403,7 +403,7 @@ async function postAI(path, body) {
 }
 async function askAI() {
   const button = $('#ai-run'), status = $('#ai-status'), result = $('#ai-result');
-  button.disabled = true; status.textContent = 'Analyzing a sample of matching written reviews…'; result.hidden = true;
+  button.disabled = true; status.textContent = $('#ai-scope').value === 'all' ? 'Preparing full analysis…' : 'Analyzing a sample of matching written reviews…'; result.hidden = true;
   cancelAnalysis = false;
   $('#ai-cancel').disabled = false;
   $('#ai-cancel').hidden = $('#ai-scope').value !== 'all';
