@@ -2,6 +2,12 @@
 
 Add a `## vX.Y.Z` section before creating each version tag. The Windows release workflow publishes that section as the GitHub release description.
 
+## v1.9.3
+
+### Changed
+- The From and To date fields in Overview and Reviews & AI now appear only when the period is set to Custom dates.
+- Switching to a preset period hides and disables the date fields without changing the selected dates, so they are available if you switch back.
+
 ## v1.9.2
 
 ### Added

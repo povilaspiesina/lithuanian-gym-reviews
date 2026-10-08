@@ -25,7 +25,7 @@ function filterFields() {
   const cities = [...new Set(clubs.map(c => c.locality))].sort();
   return `
     <label>Period<select name="period"><option value="all">All time</option><option value="last_30_days">Last 30 days</option><option value="previous_month">Previous month</option><option value="custom">Custom dates</option></select></label>
-    <label>From<input type="date" name="start" disabled></label><label>To<input type="date" name="end" disabled></label>
+    <label class="custom-date" hidden>From<input type="date" name="start" disabled></label><label class="custom-date" hidden>To<input type="date" name="end" disabled></label>
     <label>Chain<select name="chain">${choices(chains, 'chains')}</select></label>
     <label>City<select name="city">${choices(cities, 'cities')}</select></label>
     <label>Club<select name="club_id"><option value="">All clubs</option>${clubs.map(c => `<option value="${esc(c.id)}">${esc(c.chain)} · ${esc(c.club_name)} · ${esc(c.locality)}</option>`).join('')}</select></label>
@@ -39,11 +39,15 @@ function filterFields() {
 for (const id of ['overview-filters', 'review-filters']) {
   const form = document.getElementById(id);
   form.innerHTML = filterFields();
-  form.elements.period.onchange = () => {
+  const updateDateFields = () => {
     const active = form.elements.period.value === 'custom';
     form.elements.start.disabled = !active;
     form.elements.end.disabled = !active;
+    form.elements.start.closest('label').hidden = !active;
+    form.elements.end.closest('label').hidden = !active;
   };
+  form.elements.period.onchange = updateDateFields;
+  updateDateFields();
   form.onsubmit = event => {
     event.preventDefault();
     if (id === 'overview-filters') loadOverview();
