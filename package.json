@@ -1,6 +1,6 @@
 {
   "name": "lithuanian-gym-reviews",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "private": true,
   "description": "Local Lithuanian gym review collector and dashboard",
   "main": "desktop/main.js",
@@ -10,6 +10,7 @@
     "dist:win": "electron-builder --win nsis zip --x64 --publish never"
   },
   "dependencies": {
+    "electron-updater": "^6.8.10",
     "playwright": "1.63.0"
   },
   "devDependencies": {
@@ -19,28 +20,59 @@
   "build": {
     "appId": "lt.gymreviews.desktop",
     "productName": "Lithuanian Gym Reviews",
-    "directories": { "output": "release" },
+    "publish": [{ "provider": "github", "owner": "povilaspiesina", "repo": "lithuanian-gym-reviews" }],
+    "directories": {
+      "output": "release"
+    },
     "files": [
       "desktop/**/*",
       "maps_scraper.js",
       "package.json",
-      "node_modules/playwright/**/*",
-      "node_modules/playwright-core/**/*"
+      "node_modules/**/*"
     ],
     "extraResources": [
-      { "from": "dist/review_app.exe", "to": "backend/review_app.exe" },
-      { "from": "bundle-browsers", "to": "browsers" },
-      { "from": "gyms_lt.json", "to": "gyms_lt.json" },
-      { "from": "verified_maps_places.json", "to": "verified_maps_places.json" },
-      { "from": "seed", "to": "seed" }
+      {
+        "from": "dist/review_app.exe",
+        "to": "backend/review_app.exe"
+      },
+      {
+        "from": "bundle-browsers",
+        "to": "browsers"
+      },
+      {
+        "from": "gyms_lt.json",
+        "to": "gyms_lt.json"
+      },
+      {
+        "from": "verified_maps_places.json",
+        "to": "verified_maps_places.json"
+      },
+      {
+        "from": "seed",
+        "to": "seed"
+      }
     ],
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
-        { "target": "zip", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "artifactName": "Lithuanian-Gym-Reviews-${version}-${arch}.${ext}"
     },
-    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "differentialPackage": true
+    }
   }
 }

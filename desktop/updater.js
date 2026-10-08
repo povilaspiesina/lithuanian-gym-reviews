@@ -1,9 +1,3 @@
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const { Readable } = require('stream');
-const { pipeline } = require('stream/promises');
-
 const REPO = 'povilaspiesina/lithuanian-gym-reviews';
 const API = `https://api.github.com/repos/${REPO}`;
 
@@ -44,37 +38,4 @@ async function latestRelease(fetchImpl = fetch) {
   if (response.status !== 200) throw new Error('Unexpected GitHub release response.');
   return response.json();
 }
-async function downloadInstaller(asset, destination, fetchImpl = fetch) {
-  const target = path.resolve(destination);
-  const temporary = `${target}.part`;
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.rmSync(temporary, { force: true });
-  try {
-    let response = await githubFetch(`${API}/releases/assets/${asset.id}`, 'application/octet-stream', fetchImpl);
-    for (let hops = 0; response.status >= 300 && response.status < 400; hops++) {
-      if (hops >= 4) throw new Error('Too many GitHub download redirects.');
-      const location = response.headers.get('location');
-      const url = new URL(location);
-      if (url.protocol !== 'https:' || !['release-assets.githubusercontent.com', 'objects.githubusercontent.com', 'github.com'].includes(url.hostname)) {
-        throw new Error('Unexpected GitHub download location.');
-      }
-      response = await fetchImpl(url, { redirect: 'manual', signal: AbortSignal.timeout(900000) });
-    }
-    if (!response.ok || !response.body || /json/i.test(response.headers.get('content-type') || '')) {
-      throw new Error('GitHub did not return an installer.');
-    }
-    await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(temporary, { mode: 0o600 }));
-    const actualSize = fs.statSync(temporary).size;
-    if (actualSize !== asset.size) throw new Error('Installer download is incomplete.');
-    const hash = crypto.createHash('sha256');
-    await pipeline(fs.createReadStream(temporary), hash);
-    const digest = hash.digest('hex');
-    if (digest !== asset.digest) throw new Error('Installer checksum did not match GitHub.');
-    fs.renameSync(temporary, target);
-    return target;
-  } catch (error) {
-    fs.rmSync(temporary, { force: true });
-    throw error;
-  }
-}
-module.exports = { newerVersion, installerFor, latestRelease, downloadInstaller };
+module.exports = { newerVersion, installerFor, latestRelease };

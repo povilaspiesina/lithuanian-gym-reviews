@@ -2,6 +2,16 @@
 
 Add a `## vX.Y.Z` section before creating each version tag. The Windows release workflow publishes that section as the GitHub release description.
 
+## v1.9.0
+
+### Added
+- Windows updates can download only changed installer blocks when differential download is available. The update prompt shows progress and installs the result from within the app.
+- GitHub releases now include the Windows update manifest and block map needed for differential updates.
+
+### Changed
+- This version is the transition from the previous full-installer updater. Existing v1.8.0 installations download v1.9.0 once in full; later releases can use differential downloads.
+- If differential download cannot be used, the updater falls back to the full installer so the update can still complete.
+
 ## v1.8.0
 
 ### Added

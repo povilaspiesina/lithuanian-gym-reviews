@@ -4,12 +4,18 @@ const path = require('path');
 const { spawn } = require('child_process');
 const zlib = require('zlib');
 const updater = require('./updater');
+const { autoUpdater } = require('electron-updater');
 
 let mainWindow;
 let backend;
 let collector;
 let collectorMode = '';
 let dashboardUrl = '';
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = false;
+autoUpdater.on('download-progress', progress => {
+  send('update-status', `Downloading update… ${Math.round(progress.percent)}%`);
+});
 const collectorSizes = { compact: '1050,720', medium: '1400,900', large: '1800,1050' };
 
 function settingsFile() { return path.join(app.getPath('userData'), 'settings.json'); }
@@ -228,18 +234,20 @@ ipcMain.handle('check-updates', async (_event, manual = false) => {
     const choice = await dialog.showMessageBox(mainWindow, {
       type: 'info', title: 'App update available',
       message: `Lithuanian Gym Reviews ${asset.version} is available`,
-      detail: `Current version: ${app.getVersion()}. Download and open the verified installer now? Your saved reviews remain in the app data folder.`,
-      buttons: ['Download and install', 'Later'], defaultId: 0, cancelId: 1, noLink: true,
+      detail: `Current version: ${app.getVersion()}. Download and install this update now? The updater reuses unchanged installer blocks when possible. Your saved reviews remain in the app data folder.`,
+      buttons: ['Update now', 'Later'], defaultId: 0, cancelId: 1, noLink: true,
     });
     if (choice.response !== 0) return { ok: true, message: 'Update postponed.' };
+    send('update-status', `Checking update package for version ${asset.version}…`);
+    const check = await autoUpdater.checkForUpdates();
+    if (!check || check.updateInfo.version !== asset.version) {
+      throw new Error('The update package does not match the latest release. Try again shortly.');
+    }
     send('update-status', `Downloading version ${asset.version}…`);
-    const destination = path.join(app.getPath('userData'), 'updates', asset.name);
-    const installer = await updater.downloadInstaller(asset, destination);
-    send('update-status', 'Opening installer…');
-    const launchError = await shell.openPath(installer);
-    if (launchError) throw new Error(`Could not open installer: ${launchError}`);
-    app.quit();
-    return { ok: true, message: 'Installer opened.' };
+    await autoUpdater.downloadUpdate();
+    send('update-status', 'Installing update…');
+    autoUpdater.quitAndInstall(true, true);
+    return { ok: true, message: 'Update downloaded and installation started.' };
   } catch (error) {
     return { ok: false, message: error.message };
   } finally { updateCheckRunning = false; }
