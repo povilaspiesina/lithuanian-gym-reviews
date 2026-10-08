@@ -6,6 +6,8 @@
   <title>Lithuanian gym reviews</title>
   <link rel="stylesheet" href="/app.css">
   <script id="club-directory" type="application/json">CLUBS_JSON</script>
+  <script defer src="/vendor/marked.umd.js"></script>
+  <script defer src="/vendor/purify.min.js"></script>
   <script defer src="/app.js"></script>
 </head>
 <body>
@@ -13,13 +15,13 @@
     <div><h1>Lithuanian gym reviews</h1><p>Gym+ · Lemon Gym · SportGates</p></div>
     <nav aria-label="Dashboard sections">
       <button type="button" class="nav-active" data-view="overview">Overview</button>
-      <button type="button" data-view="collection">Collection</button>
       <button type="button" data-view="reviews">Reviews &amp; AI</button>
+      <button type="button" data-view="collection">Collection</button>
     </nav>
   </header>
   <main>
     <section id="overview-view" class="view">
-      <div class="section-head"><div><h2>Overview</h2><p>Compare ratings, volume, replies and coverage.</p></div><span class="updated" id="overview-updated"></span></div>
+      <div class="section-head"><div><h2>Overview</h2><p>Compare ratings, volume and replies.</p></div><span class="updated" id="overview-updated"></span></div>
       <form id="overview-filters" class="filters"></form>
       <div class="metrics">
         <div class="card metric">Reviews<b id="count">—</b></div>
@@ -28,11 +30,8 @@
         <div class="card metric">1–2 star reviews<b id="low">—</b><small id="low-pct"></small></div>
         <div class="card metric">Owner replies<b id="replied">—</b><small id="reply-pct"></small></div>
         <div class="card metric">Replies to 1–2 ★<b id="low-reply">—</b><small>of 1–2 star reviews</small></div>
-        <div class="card metric">Clubs complete<b id="coverage">—</b><small id="coverage-note"></small></div>
-        <div class="card metric">Known reviews missing<b id="missing">—</b><small id="missing-note"></small></div>
       </div>
       <p class="quality-note" id="overview-quality"></p>
-      <details class="card coverage-details"><summary>Coverage by club</summary><div id="coverage-list"></div></details>
       <div class="charts">
         <section class="card chart"><div class="card-head"><h3>Rating distribution</h3><a data-export="distribution" class="export" href="#">Export CSV</a></div><p class="hint">Click a rating to filter the overview.</p><div id="distribution"></div></section>
         <section class="card chart"><div class="card-head"><h3>Review volume over time</h3><a data-export="volume" class="export" href="#">Export CSV</a></div><p class="hint" id="trend-note"></p><div id="trend"></div></section>
@@ -49,9 +48,11 @@
         <div class="card-head"><h3>Club coverage</h3><button type="button" id="retry-problem-clubs" class="primary">Retry clubs needing attention</button></div>
         <p id="collection-progress-label" class="hint"></p><progress id="collection-progress" max="1" value="0"></progress>
         <div id="collection-state-counts" class="state-counts"></div>
+        <div class="collection-coverage-metrics"><div>Clubs complete <b id="coverage">—</b><small id="coverage-note"></small></div><div>Known reviews missing <b id="missing">—</b><small id="missing-note"></small></div></div>
         <p class="hint">Progress counts clubs whose saved review count meets the Maps total and whose saved text has no visible “More” previews. Maps totals can change; a blank total means coverage is unknown.</p>
         <p id="collection-action-status" role="status" class="hint"></p>
       </section>
+      <details class="card coverage-details"><summary>Coverage by club</summary><div id="coverage-list"></div></details>
       <section class="card collection-table-card"><div class="card-head"><h3>Clubs</h3><label class="collection-filter">Show <select id="collection-filter"><option value="all">All clubs</option><option value="attention">Need attention</option><option value="complete">Complete</option></select></label></div>
         <div class="table-wrap"><table class="collection-table"><thead><tr><th>Club</th><th>Status</th><th>Saved / Maps</th><th>Last checked</th><th>Details</th><th>Action</th></tr></thead><tbody id="collection-rows"></tbody></table></div>
       </section>
@@ -60,10 +61,12 @@
       <div class="section-head"><div><h2>Reviews &amp; AI</h2><p>Read comments, owner replies, and ask questions about a sample.</p></div><span class="updated" id="reviews-updated"></span></div>
       <form id="review-filters" class="filters"></form>
       <section class="card ai-card"><div class="card-head"><h3>Hugging Face analysis</h3><span class="hint">Selected review text is sent only when you click Analyze. Free credits are limited; <a href="https://huggingface.co/docs/inference-providers/pricing" target="_blank" rel="noopener noreferrer">check usage and pricing</a>.</span></div>
-        <div class="ai-controls"><label>Analysis model<input id="ai-model" value="Qwen/Qwen2.5-7B-Instruct:featherless-ai" spellcheck="false"></label><label>Prompt preset<select id="ai-mode"><option value="issues">Recurring problems (1–3 ★)</option><option value="actions">Practical fixes (1–3 ★)</option><option value="billing">Membership and billing (1–3 ★)</option><option value="strengths">What members value</option><option value="replies">Owner reply quality</option><option value="recent">Recent changes</option><option value="compare">Compare selected clubs</option><option value="brief">Management brief</option><option value="question">Custom prompt</option></select></label></div>
-        <p class="hint">Qwen2.5-7B-Instruct uses Featherless AI. If your account has disabled that provider, enable it in <a href="https://huggingface.co/settings/inference-providers" target="_blank" rel="noopener noreferrer">Hugging Face provider settings</a>.</p>
-        <label>Prompt<textarea id="ai-question" rows="3">Group recurring problems in these reviews. For each theme, give a concise explanation and cite review IDs and author names when available. Separate common patterns from isolated reports, and do not infer prevalence beyond this sample.</textarea></label>
-        <div class="ai-actions"><button id="ai-run" type="button" class="primary">Analyze selected reviews</button><span id="ai-status" class="hint">Use “Hugging Face token” in the desktop toolbar to connect your account.</span></div>
+        <div class="ai-controls"><label>Analysis model<select id="ai-model"><option value="Qwen/Qwen2.5-7B-Instruct:featherless-ai">Qwen 2.5 7B · Featherless</option><option value="openai/gpt-oss-20b:cheapest">GPT-OSS 20B · cheapest provider</option><option value="openai/gpt-oss-120b:cheapest">GPT-OSS 120B · cheapest provider</option><option value="custom">Other model ID…</option></select></label><label>Choose a prompt<select id="ai-mode"></select></label></div>
+        <div class="ai-options"><label id="custom-model-label" hidden>Custom Hugging Face model ID<input id="ai-custom-model" spellcheck="false" placeholder="owner/model:provider"></label><label>Answer language<select id="ai-language"><option value="en">English</option><option value="lt">Lithuanian</option></select></label><label>Review scope<select id="ai-scope"><option value="sample">Balanced sample · faster</option><option value="all">All matching comments · many requests</option></select></label></div>
+        <p class="hint" id="ai-scope-note">A balanced sample includes up to 60 complete written comments. The result shows how many matched and how many were analyzed. To analyze every matching comment, choose “All matching comments”; this can take many minutes and use substantial Hugging Face credits.</p>
+        <p class="hint">Model availability depends on your enabled <a href="https://huggingface.co/settings/inference-providers" target="_blank" rel="noopener noreferrer">Hugging Face providers</a>.</p>
+        <div class="prompt-editor"><p id="prompt-description" class="hint"></p><div class="prompt-name-row"><label>Prompt name<input id="prompt-name" maxlength="80" placeholder="e.g. Monthly manager brief"></label><div class="prompt-buttons"><button id="prompt-save" type="button" class="primary">Save as new</button><button id="prompt-copy" type="button" hidden>Save a copy</button><button id="prompt-delete" type="button" hidden>Delete saved prompt</button></div></div><label>Instructions for the AI<textarea id="ai-question" rows="5"></textarea></label><p id="prompt-status" class="hint" role="status">Built-in prompts can be edited and saved under your own name.</p></div>
+        <div class="ai-actions"><button id="ai-run" type="button" class="primary">Analyze selected reviews</button><button id="ai-cancel" type="button" hidden>Stop after this batch</button><span id="ai-status" class="hint">Use “Hugging Face token” in the desktop toolbar to connect your account.</span></div>
         <div id="ai-result" class="ai-result" hidden></div>
       </section>
       <div class="card-head review-head"><h3>Reviews <span id="review-count" class="muted"></span></h3><div class="review-tools"><label>Translate to <select id="translation-language"><option value="en">English</option><option value="lt">Lithuanian</option></select></label><label>Translation model <input id="translation-model" value="openai/gpt-oss-120b:cheapest" spellcheck="false"></label><a class="export" id="reviews-export" href="/export.csv">Export filtered reviews CSV</a></div></div>

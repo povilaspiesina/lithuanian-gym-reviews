@@ -9,10 +9,54 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
-from review_app import ask_hugging_face, chart_csv, chart_data, connect, coverage_data, export_club_csv, hugging_face_chat, import_csv, review_data, routed_model, stats, translate_review
+from review_app import analyze_full_batch, ask_hugging_face, chart_csv, chart_data, combine_ai_summaries, connect, coverage_data, delete_prompt_preset, enforce_english_answer, export_club_csv, hugging_face_chat, import_csv, prompt_presets, review_data, routed_model, save_prompt_preset, stats, translate_review
 
 
 class ReviewAppTests(unittest.TestCase):
+    def test_chinese_analysis_is_rewritten_to_english(self):
+        chinese = "设备维护不佳，空调和清洁问题多次出现。"
+        with patch("review_app.hugging_face_chat", return_value="Equipment maintenance and cleanliness recur.") as chat:
+            answer = enforce_english_answer(chinese, "openai/gpt-oss-20b:cheapest", "hf_fake", "en")
+        self.assertEqual(answer, "Equipment maintenance and cleanliness recur.")
+        self.assertIn("entirely in English", chat.call_args.args[0]["messages"][0]["content"])
+
+    def test_full_analysis_batches_cover_each_comment_and_request_english(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "reviews.csv"
+            source.write_text("club_id,review_id,rating,published_at,text\n"
+                              "gym-vilnius-mokslininku-g-6a,a,1,2026-10-01,First issue\n"
+                              "gym-vilnius-mokslininku-g-6a,b,2,2026-10-02,Second issue\n", encoding="utf-8")
+            with closing(connect(root / "reviews.sqlite3")) as con:
+                import_csv(con, source)
+                with patch.dict(os.environ, {"HF_TOKEN": "hf_fake"}), patch("review_app.hugging_face_chat", return_value="Both issues") as chat:
+                    first = analyze_full_batch(con, {}, "Find issues", "openai/gpt-oss-20b:cheapest", "issues", "en", 0)
+                    self.assertEqual((first["processed"], first["eligible"]), (2, 2))
+                    prompt = chat.call_args.args[0]
+                    self.assertIn("Write the entire answer in English", prompt["messages"][0]["content"])
+                    self.assertIn("First issue", prompt["messages"][1]["content"])
+                    self.assertIn("Second issue", prompt["messages"][1]["content"])
+                    combined = combine_ai_summaries("Find issues", "openai/gpt-oss-20b:cheapest", "en", ["Both issues"])
+                    self.assertEqual(combined["answer"], "Both issues")
+                with patch.dict(os.environ, {"HF_TOKEN": "hf_fake"}):
+                    with self.assertRaisesRegex(ValueError, "Choose English"):
+                        analyze_full_batch(con, {}, "Find issues", "openai/gpt-oss-20b:cheapest", "issues", "zh", 0)
+
+    def test_named_prompts_survive_reopen_and_can_be_edited_or_deleted(self):
+        with tempfile.TemporaryDirectory() as folder:
+            database = Path(folder) / "reviews.sqlite3"
+            with closing(connect(database)) as con:
+                saved = save_prompt_preset(con, {"name": "Monthly issues", "prompt": "Summarize billing complaints.", "mode": "issues"})
+                self.assertEqual(prompt_presets(con)[0]["name"], "Monthly issues")
+            with closing(connect(database)) as con:
+                self.assertEqual(prompt_presets(con)[0]["id"], saved["id"])
+                edited = save_prompt_preset(con, {"id": saved["id"], "name": "Monthly trends", "prompt": "Find trends.", "mode": "summary"})
+                self.assertEqual(edited["prompt"], "Find trends.")
+                with self.assertRaisesRegex(ValueError, "not found"):
+                    save_prompt_preset(con, {"id": "built-in", "name": "Oops", "prompt": "Text", "mode": "issues"})
+                delete_prompt_preset(con, saved["id"])
+                self.assertEqual(prompt_presets(con), [])
+
     def test_hugging_face_uses_an_identified_api_request(self):
         response = io.BytesIO(json.dumps({"choices": [{"message": {"content": "Paris"}, "finish_reason": "stop"}]}).encode())
         with patch("review_app.urllib.request.urlopen", return_value=response) as send:

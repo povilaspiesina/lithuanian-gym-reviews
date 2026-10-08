@@ -2,6 +2,20 @@
 
 Add a `## vX.Y.Z` section before creating each version tag. The Windows release workflow publishes that section as the GitHub release description.
 
+## v1.10.0
+
+### Added
+- Named AI prompts can be created from built-in examples, edited, copied, and deleted. They are saved in the local review database.
+- Reviews & AI offers Qwen 2.5 7B, GPT-OSS 20B, GPT-OSS 120B, and a custom Hugging Face model ID, plus English or Lithuanian answer language.
+- AI review scope can be a balanced sample or all matching complete written comments. Full analysis processes comments in batches, shows progress, and combines batch summaries; it can take many minutes and consume substantial inference credits.
+- Manual update checks show a small progress window. The Windows app also checks automatically on launch and every 12 hours while it remains open.
+
+### Changed
+- AI answers render as formatted Markdown with unsafe HTML removed. Substantial Chinese output is rewritten in English when English is selected.
+- Overview and Reviews & AI are adjacent in navigation and share filter choices when switching. Collection now holds the club coverage metrics and details.
+- Average rating trend lines connect rated periods across gaps in the data.
+- The sample analysis status clearly distinguishes comments analyzed from all eligible comments.
+
 ## v1.9.3
 
 ### Changed

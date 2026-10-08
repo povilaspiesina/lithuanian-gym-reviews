@@ -4,6 +4,7 @@ let mode = '';
 let setupShown = false;
 let issueCount = 0;
 let updateOnStartup = false;
+let updateCheckPending = false;
 
 function setControls() {
   for (const id of ['collect', 'refresh', 'login', 'import', 'folder', 'hf-token']) {
@@ -34,6 +35,7 @@ function dashboardReady(url) {
       $('collector-size').value = info.collectorSize;
       $('check-updates').hidden = !info.updatesSupported;
       updateOnStartup = info.updatesSupported;
+      if (updateOnStartup) setInterval(() => checkUpdates(false), 12 * 60 * 60 * 1000);
       if (info.needsSignIn) $('signin-dialog').showModal();
       else if (updateOnStartup) checkUpdates(false);
     });
@@ -59,10 +61,40 @@ $('signin-later').onclick = () => {
   if (updateOnStartup) checkUpdates(false);
 };
 async function checkUpdates(manual) {
-  const result = await window.gymApp.checkUpdates(manual);
-  if (result.message) appendLog(result.message);
+  if (updateCheckPending) {
+    if (manual) {
+      $('update-message').textContent = 'An update check is already running. Results will appear here shortly.';
+      if (!$('update-dialog').open) $('update-dialog').show();
+    }
+    return;
+  }
+  updateCheckPending = true;
+  $('status').textContent = 'Checking for updates…';
+  if (manual) {
+    $('update-title').textContent = 'Checking for updates';
+    $('update-message').textContent = 'Connecting to GitHub releases…';
+    $('update-progress').hidden = false;
+    if (!$('update-dialog').open) $('update-dialog').show();
+  }
+  try {
+    const result = await window.gymApp.checkUpdates(manual);
+    if (result.message) appendLog(result.message);
+    if ($('update-dialog').open) {
+      $('update-title').textContent = result.ok ? 'Update check complete' : 'Update check could not finish';
+      $('update-message').textContent = result.message || 'Update check complete.';
+      $('update-progress').hidden = true;
+    }
+  } catch (error) {
+    appendLog(`Update check failed: ${error.message}`);
+    if ($('update-dialog').open) {
+      $('update-title').textContent = 'Update check could not finish';
+      $('update-message').textContent = error.message;
+      $('update-progress').hidden = true;
+    }
+  } finally { updateCheckPending = false; if (!running) $('status').textContent = 'Ready'; }
 }
 $('check-updates').onclick = () => checkUpdates(true);
+$('update-close').onclick = () => $('update-dialog').close();
 $('collector-size').onchange = async () => {
   const result = await window.gymApp.setCollectorSize($('collector-size').value);
   if (!result.ok) appendLog(result.message);
@@ -96,7 +128,17 @@ window.gymApp.on('collector-progress', state => {
 });
 window.gymApp.on('app-log', appendLog);
 window.gymApp.on('app-error', message => { appendLog(message); $('status').textContent = 'Error'; });
-window.gymApp.on('update-status', message => { $('status').textContent = message; });
+window.gymApp.on('update-status', message => {
+  $('status').textContent = message;
+  if ($('update-dialog').open) {
+    $('update-title').textContent = 'Updating app';
+    $('update-message').textContent = message;
+    const match = message.match(/(\d+)%/);
+    if (match) { $('update-progress').max = 100; $('update-progress').value = Number(match[1]); }
+    else $('update-progress').removeAttribute('value');
+    $('update-progress').hidden = false;
+  }
+});
 window.gymApp.on('data-summary', data => {
   const coverage = data.coverage;
   const date = coverage.last_imported;

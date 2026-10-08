@@ -7,6 +7,9 @@ const fmt = n => Number(n).toLocaleString();
 let overviewData = null, reviewData = null, collectionData = null, reviewOffset = 0;
 let activeClubId = '';
 let sortKey = 'count', sortDescending = true;
+let savedPrompts = [];
+let activeView = 'overview';
+let cancelAnalysis = false;
 const aiPresets = {
   issues: {mode:'issues', prompt:'Group recurring problems in these reviews. For each theme, give a concise explanation and cite review IDs and author names when available. Separate common patterns from isolated reports, and do not infer prevalence beyond this sample.'},
   actions: {mode:'issues', prompt:'Recommend the three most practical improvements the gyms could make based on these negative reviews. For each, describe the customer problem, a concrete action, and supporting review IDs with author names when available. Say when evidence is sparse.'},
@@ -18,6 +21,78 @@ const aiPresets = {
   brief: {mode:'summary', prompt:'Write a short management brief with strengths, recurring problems, owner response gaps, and two practical next actions. Cite review IDs and author names when available. Keep conclusions limited to this sample.'},
   question: {mode:'question', prompt:''},
 };
+const presetDetails = {
+  issues:['Recurring problems (1–3 ★)','Find repeated complaints and cite evidence.'],
+  actions:['Practical fixes (1–3 ★)','Turn negative feedback into concrete actions.'],
+  billing:['Membership and billing (1–3 ★)','Focus on contracts, cancellation and charges.'],
+  strengths:['What members value','Summarize positive feedback.'],
+  replies:['Owner reply quality','Assess how clubs respond to concerns.'],
+  recent:['Recent changes','Summarize the selected date period.'],
+  compare:['Compare selected clubs','Contrast chains or clubs in the filtered sample.'],
+  brief:['Management brief','Create a short decision-ready summary.'],
+  question:['New blank prompt','Write your own question about the sample.'],
+};
+
+function selectedPreset() {
+  const key = $('#ai-mode').value;
+  return key.startsWith('saved:') ? savedPrompts.find(item => item.id === key.slice(6)) : aiPresets[key];
+}
+function renderPromptChoices(selected = 'issues') {
+  const options = Object.entries(presetDetails).map(([key, [name]]) => `<option value="${key}">${esc(name)}</option>`).join('');
+  const saved = savedPrompts.map(item => `<option value="saved:${esc(item.id)}">${esc(item.name)}</option>`).join('');
+  $('#ai-mode').innerHTML = `<optgroup label="Built-in examples">${options}</optgroup><optgroup label="My saved prompts">${saved || '<option disabled>No saved prompts yet</option>'}</optgroup>`;
+  $('#ai-mode').value = selected;
+  if (!$('#ai-mode').value) $('#ai-mode').value = 'issues';
+  selectPrompt();
+}
+function selectPrompt() {
+  const key = $('#ai-mode').value;
+  const item = selectedPreset();
+  if (!item) return;
+  const saved = key.startsWith('saved:');
+  $('#prompt-name').value = saved ? item.name : key === 'question' ? '' : presetDetails[key][0];
+  $('#ai-question').value = item.prompt;
+  $('#prompt-description').textContent = saved ? 'Your saved prompt. Edit its name or instructions, then save the changes.' : presetDetails[key][1];
+  $('#prompt-save').textContent = saved ? 'Save changes' : 'Save as new';
+  $('#prompt-copy').hidden = !saved;
+  $('#prompt-delete').hidden = !saved;
+  $('#prompt-status').textContent = saved ? 'Saved on this computer in the review archive.' : 'Built-in example. Edit and save it under your own name.';
+}
+async function loadPrompts() {
+  try {
+    const response = await fetch('/api/prompts');
+    if (!response.ok) throw new Error('Could not load saved prompts');
+    savedPrompts = await response.json();
+    renderPromptChoices();
+  } catch (error) { $('#prompt-status').textContent = error.message; }
+}
+async function savePrompt(copy = false) {
+  const key = $('#ai-mode').value;
+  const item = selectedPreset();
+  const body = {action:'save', name:$('#prompt-name').value.trim(), prompt:$('#ai-question').value.trim(),
+    mode:item?.mode || 'question', id:key.startsWith('saved:') && !copy ? key.slice(6) : ''};
+  try {
+    const response = await fetch('/api/prompts', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Could not save prompt');
+    savedPrompts = savedPrompts.filter(prompt => prompt.id !== result.id).concat(result).sort((a,b) => a.name.localeCompare(b.name));
+    renderPromptChoices('saved:' + result.id);
+    $('#prompt-status').textContent = 'Prompt saved in the local review archive.';
+  } catch (error) { $('#prompt-status').textContent = error.message; }
+}
+async function deletePrompt() {
+  const key = $('#ai-mode').value;
+  if (!key.startsWith('saved:') || !confirm('Delete this saved prompt?')) return;
+  try {
+    const response = await fetch('/api/prompts', {method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'delete', id:key.slice(6)})});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Could not delete prompt');
+    savedPrompts = savedPrompts.filter(item => item.id !== result.deleted);
+    renderPromptChoices();
+    $('#prompt-status').textContent = 'Saved prompt deleted.';
+  } catch (error) { $('#prompt-status').textContent = error.message; }
+}
 
 function filterFields() {
   const choices = (items, label) => `<option value="">All ${label}</option>` + items.map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join('');
@@ -46,13 +121,24 @@ for (const id of ['overview-filters', 'review-filters']) {
     form.elements.start.closest('label').hidden = !active;
     form.elements.end.closest('label').hidden = !active;
   };
-  form.elements.period.onchange = updateDateFields;
+  form.updateDateFields = updateDateFields;
+  form.addEventListener('change', () => { updateDateFields(); syncFilters(form); });
+  form.addEventListener('input', () => syncFilters(form));
   updateDateFields();
   form.onsubmit = event => {
     event.preventDefault();
+    syncFilters(form);
     if (id === 'overview-filters') loadOverview();
     else { reviewOffset = 0; loadReviews(); }
   };
+}
+
+function syncFilters(source) {
+  const destination = source.id === 'overview-filters' ? $('#review-filters') : $('#overview-filters');
+  for (const name of ['period','start','end','chain','city','club_id','rating','comment','reply','q']) {
+    destination.elements[name].value = source.elements[name].value;
+  }
+  destination.updateDateFields();
 }
 
 function query(form) {
@@ -95,12 +181,9 @@ function renderPlot(target, rows, metric) {
     const barW = Math.max(3, Math.min(30, plotW / rows.length * .72));
     marks = rows.map((row, i) => `<rect class="volume" x="${x(i)-barW/2}" y="${y(row.count)}" width="${barW}" height="${Math.max(0,top+plotH-y(row.count))}" data-tip="${esc(`${row.period}: ${fmt(row.count)} reviews`)}"/>`).join('');
   } else {
-    let points = [], segments = [];
-    for (let i = 0; i <= rows.length; i++) {
-      if (rows[i]?.average_rating != null) points.push(`${x(i)},${y(rows[i].average_rating)}`);
-      else if (points.length) { segments.push(`<polyline class="trend-line" points="${points.join(' ')}"/>`); points = []; }
-    }
-    marks = segments.join('') + rows.map((row, i) => row.average_rating == null ? '' : `<circle class="plot-dot" tabindex="0" cx="${x(i)}" cy="${y(row.average_rating)}" r="5" data-tip="${esc(`${row.period}: ${row.average_rating} ★ from ${fmt(row.count)} reviews`)}"/>`).join('');
+    const points = rows.flatMap((row, i) => row.average_rating == null ? [] : [`${x(i)},${y(row.average_rating)}`]);
+    marks = (points.length > 1 ? `<polyline class="trend-line" points="${points.join(' ')}"/>` : '') +
+      rows.map((row, i) => row.average_rating == null ? '' : `<circle class="plot-dot" tabindex="0" cx="${x(i)}" cy="${y(row.average_rating)}" r="5" data-tip="${esc(`${row.period}: ${row.average_rating} ★ from ${fmt(row.count)} reviews`)}"/>`).join('');
   }
   const labels = [...new Set([0, Math.floor((rows.length - 1) / 2), rows.length - 1])].map(i => `<text class="axis" x="${x(i)}" y="${height-8}" text-anchor="middle">${esc(rows[i].period)}</text>`).join('');
   el.innerHTML = `<svg class="plot" viewBox="0 0 ${width} ${height}" role="img" aria-label="${metric === 'count' ? 'Review volume' : 'Average rating'} by period">${grid}${marks}${labels}</svg>`;
@@ -119,7 +202,7 @@ function renderCoverage(coverage) {
   $('#collection-updated').textContent = label;
   const quality = coverage.date_quality || {};
   const estimated = quality.estimated || 0, unknown = quality.unknown || 0;
-  $('#overview-quality').textContent = `Across the archive, ${fmt(estimated)} reviews have estimated dates${unknown ? ` and ${fmt(unknown)} have unknown date precision` : ''}; ${fmt(coverage.shortened_reviews || 0)} have shortened comment or reply text. Time charts and date filters use the stored dates. “Known missing” counts only clubs where Maps supplied a total; unknown coverage is never counted as zero.`;
+  $('#overview-quality').textContent = `Across the archive, ${fmt(estimated)} reviews have estimated dates${unknown ? ` and ${fmt(unknown)} have unknown date precision` : ''}. Time charts and date filters use the stored dates.`;
   const entries = clubs.filter(c => c.status === 'open').map(c => ({ club: c, info: coverage.clubs[c.id] || {} }));
   entries.sort((a, b) => Number(a.info.complete) - Number(b.info.complete) || a.club.chain.localeCompare(b.club.chain));
   $('#coverage-list').innerHTML = entries.map(({club, info}) => {
@@ -140,7 +223,7 @@ function renderCollection(coverage) {
   const states = coverage.states || {};
   $('#collection-progress').max = coverage.open || 1;
   $('#collection-progress').value = states.complete || 0;
-  $('#collection-progress-label').textContent = `${fmt(states.complete || 0)} of ${fmt(coverage.open)} open clubs have verified counts and full saved text · ${fmt(coverage.missing_known)} known reviews missing · ${fmt(coverage.shortened_reviews || 0)} shortened`;
+  $('#collection-progress-label').textContent = `${fmt(states.complete || 0)} of ${fmt(coverage.open)} open clubs have verified counts and full saved text`;
   if (activeClubId && byId.has(activeClubId)) {
     const club = byId.get(activeClubId);
     $('#collection-progress-label').textContent += ` · Scanning ${club.chain} · ${club.club_name}`;
@@ -311,31 +394,77 @@ async function loadReviews() {
   catch (error) { alert(error.message); }
 }
 
+function aiModel() { return $('#ai-model').value === 'custom' ? $('#ai-custom-model').value.trim() : $('#ai-model').value; }
+async function postAI(path, body) {
+  const response = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'Analysis failed');
+  return result;
+}
 async function askAI() {
   const button = $('#ai-run'), status = $('#ai-status'), result = $('#ai-result');
   button.disabled = true; status.textContent = 'Analyzing a sample of matching written reviews…'; result.hidden = true;
+  cancelAnalysis = false;
+  $('#ai-cancel').disabled = false;
+  $('#ai-cancel').hidden = $('#ai-scope').value !== 'all';
   try {
-    const mode = aiPresets[$('#ai-mode').value].mode;
-    const response = await fetch('/api/ai?' + query($('#review-filters')), {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({mode, model:$('#ai-model').value.trim(), question:$('#ai-question').value.trim()}),
-    });
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.error || 'Analysis failed');
-    status.textContent = `Analyzed ${fmt(body.sampled)} of ${fmt(body.eligible)} eligible comments using ${body.model}.`;
-    result.textContent = body.answer; result.hidden = false;
+    const mode = selectedPreset()?.mode || 'question';
+    const request = {mode, model:aiModel(), question:$('#ai-question').value.trim(), language:$('#ai-language').value};
+    if (!request.model) throw new Error('Choose an analysis model.');
+    let body;
+    if ($('#ai-scope').value === 'all') {
+      const summaries = [];
+      let offset = 0, eligible = null;
+      status.textContent = 'Analyzing all matching comments in batches. This can take several minutes…';
+      do {
+        const batch = await postAI('/api/ai-batch?' + query($('#review-filters')),
+          {...request, offset});
+        if (!batch.processed) throw new Error('Full analysis stopped because a batch contained no reviews.');
+        summaries.push(batch.answer);
+        offset += batch.processed;
+        eligible = batch.eligible;
+        status.textContent = `Read ${fmt(offset)} of ${fmt(eligible)} matching comments · ${summaries.length} AI batches. Synthesizing follows.`;
+        if (cancelAnalysis) throw new Error(`Analysis stopped after ${fmt(offset)} of ${fmt(eligible)} comments. No complete result was produced.`);
+      } while (offset < eligible);
+      let layer = summaries;
+      while (layer.length > 1) {
+        const next = [];
+        for (let i = 0; i < layer.length; i += 6) {
+          const combined = await postAI('/api/ai-combine', {...request, summaries:layer.slice(i, i + 6)});
+          next.push(combined.answer);
+          status.textContent = `Read all ${fmt(eligible)} matching comments · combining ${Math.min(i + 6, layer.length)} of ${layer.length} summaries.`;
+          if (cancelAnalysis) throw new Error('Analysis stopped while combining summaries. No complete result was produced.');
+        }
+        layer = next;
+      }
+      body = {answer:layer[0], model:request.model, sampled:offset, eligible};
+      status.textContent = `Full analysis: ${fmt(offset)} of ${fmt(eligible)} matching comments processed using ${body.model}.`;
+    } else {
+      body = await postAI('/api/ai?' + query($('#review-filters')), request);
+      status.textContent = `Balanced sample: ${fmt(body.sampled)} of ${fmt(body.eligible)} eligible comments analyzed using ${body.model}. ${body.eligible > body.sampled ? 'Choose “All matching comments” to cover the rest.' : ''}`;
+    }
+    result.innerHTML = DOMPurify.sanitize(marked.parse(body.answer || '', {breaks:true}),
+      {USE_PROFILES:{html:true}, FORBID_TAGS:['img','svg','math','iframe','video','audio'], FORBID_ATTR:['style']});
+    for (const link of result.querySelectorAll('a')) {
+      link.target = '_blank'; link.rel = 'noopener noreferrer';
+    }
+    result.hidden = false;
   } catch (error) { status.textContent = error.message; }
-  finally { button.disabled = false; }
+  finally { button.disabled = false; $('#ai-cancel').hidden = true; }
 }
 
 document.querySelectorAll('[data-view]').forEach(button => button.onclick = () => {
   const view = button.dataset.view;
+  if (activeView === 'overview' && view === 'reviews') syncFilters($('#overview-filters'));
+  if (activeView === 'reviews' && view === 'overview') syncFilters($('#review-filters'));
+  activeView = view;
   document.querySelectorAll('[data-view]').forEach(x => x.classList.toggle('nav-active', x === button));
   $('#overview-view').hidden = view !== 'overview';
   $('#collection-view').hidden = view !== 'collection';
   $('#reviews-view').hidden = view !== 'reviews';
   if (view === 'collection') loadCollection();
-  if (view === 'reviews' && !reviewData) loadReviews();
+  if (view === 'reviews') { reviewOffset = 0; loadReviews(); }
+  if (view === 'overview' && overviewData) loadOverview();
 });
 $('#collection-filter').onchange = () => { if (collectionData) renderCollection(collectionData); };
 $('#retry-problem-clubs').onclick = () => requestCollection('attention');
@@ -346,9 +475,9 @@ $('#collection-rows').onclick = event => {
 setInterval(() => { if (!$('#collection-view').hidden) loadCollection(); }, 5000);
 document.addEventListener('click', event => {
   const rating = event.target.closest('[data-rating]');
-  if (rating) { $('#overview-filters').elements.rating.value = rating.dataset.rating; loadOverview(); }
+  if (rating) { $('#overview-filters').elements.rating.value = rating.dataset.rating; syncFilters($('#overview-filters')); loadOverview(); }
   const chain = event.target.closest('[data-chain]');
-  if (chain) { $('#overview-filters').elements.chain.value = chain.dataset.chain; loadOverview(); }
+  if (chain) { $('#overview-filters').elements.chain.value = chain.dataset.chain; syncFilters($('#overview-filters')); loadOverview(); }
 });
 document.querySelectorAll('[data-sort]').forEach(button => button.onclick = () => {
   const next = button.dataset.sort;
@@ -359,10 +488,25 @@ document.querySelector('[data-export="clubs"]').addEventListener('click', export
 $('#previous').onclick = () => { reviewOffset = Math.max(0, reviewOffset - 50); loadReviews(); };
 $('#next').onclick = () => { reviewOffset += 50; loadReviews(); };
 $('#ai-run').onclick = askAI;
+$('#ai-cancel').onclick = () => { cancelAnalysis = true; $('#ai-cancel').disabled = true; $('#ai-status').textContent = 'Stopping after the current batch…'; };
+$('#ai-model').onchange = () => { $('#custom-model-label').hidden = $('#ai-model').value !== 'custom'; };
+$('#ai-scope').onchange = () => {
+  $('#ai-scope-note').textContent = $('#ai-scope').value === 'all' ?
+    'Every matching complete written comment is analyzed in batches, then the summaries are combined. This can take many minutes and use substantial Hugging Face credits. Keep this page open until it finishes.' :
+    'A balanced sample includes up to 60 complete written comments. The result shows how many matched and how many were analyzed. Choose “All matching comments” for full coverage.';
+};
 $('#reviews').onclick = event => {
   const button = event.target.closest('.translate-button');
   if (button) translateCard(button);
 };
 $('#translation-language').onchange = () => { if (reviewData) renderReviews(reviewData); };
-$('#ai-mode').onchange = () => { $('#ai-question').value = aiPresets[$('#ai-mode').value].prompt; };
+$('#ai-mode').onchange = selectPrompt;
+$('#prompt-save').onclick = () => savePrompt();
+$('#prompt-copy').onclick = () => savePrompt(true);
+$('#prompt-delete').onclick = deletePrompt;
+for (const id of ['prompt-name','ai-question']) $("#" + id).addEventListener('input', () => {
+  $('#prompt-status').textContent = 'Unsaved edits. Save this prompt to use it again later.';
+});
+renderPromptChoices();
+loadPrompts();
 loadOverview();
