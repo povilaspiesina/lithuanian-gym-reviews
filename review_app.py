@@ -436,6 +436,13 @@ def ai_sample(con, params, mode):
     return eligible, selected
 
 
+def routed_model(model):
+    # The unsuffixed Qwen ID can be routed to an unavailable account preference.
+    if model == "Qwen/Qwen2.5-7B-Instruct":
+        return model + ":featherless-ai"
+    return model
+
+
 def hugging_face_chat(prompt, token):
     request = urllib.request.Request(
         "https://router.huggingface.co/v1/chat/completions",
@@ -454,7 +461,13 @@ def hugging_face_chat(prompt, token):
             raise ValueError("Hugging Face returned an empty answer")
         return answer.strip()
     except urllib.error.HTTPError as exc:
-        detail = exc.read(500).decode("utf-8", "replace")
+        detail = exc.read(2000).decode("utf-8", "replace")
+        try:
+            code = json.loads(detail).get("error", {}).get("code")
+        except (ValueError, AttributeError):
+            code = None
+        if code == "model_not_supported" and prompt.get("model", "").startswith("Qwen/Qwen2.5-7B-Instruct"):
+            raise ValueError("Qwen2.5-7B-Instruct is served by Featherless AI on Hugging Face, but this account cannot route to it. Enable Featherless AI in Hugging Face Inference Providers settings, then retry. Check available credits if it still fails.") from exc
         raise ValueError(f"Hugging Face returned HTTP {exc.code}: {detail}") from exc
     except (urllib.error.URLError, TimeoutError) as exc:
         raise ValueError(f"Hugging Face connection failed: {exc}") from exc
@@ -468,6 +481,7 @@ def ask_hugging_face(con, params, question, model, mode):
         raise ValueError("invalid AI mode")
     if not question or len(question) > 2000:
         raise ValueError("question must be 1–2000 characters")
+    model = routed_model(model)
     if not re.fullmatch(r"[A-Za-z0-9_./:-]{3,120}", model):
         raise ValueError("invalid model ID")
     eligible, rows = ai_sample(con, params, mode)
@@ -503,6 +517,7 @@ def translate_review(con, club_id, review_id, target_language, model):
         raise ValueError("Add a Hugging Face token in the desktop app first")
     if target_language not in {"en", "lt"}:
         raise ValueError("Choose English or Lithuanian")
+    model = routed_model(model)
     if not re.fullmatch(r"[A-Za-z0-9_./:-]{3,120}", model):
         raise ValueError("invalid model ID")
     row = con.execute("SELECT text, owner_reply_text FROM reviews WHERE club_id=? AND review_id=?",

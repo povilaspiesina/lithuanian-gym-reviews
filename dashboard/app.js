@@ -290,7 +290,7 @@ async function translateCard(button) {
     const response = await fetch('/api/translate', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({club_id:clubId, review_id:reviewId,
-        target_language:$('#translation-language').value, model:$('#ai-model').value.trim()}),
+        target_language:$('#translation-language').value, model:$('#translation-model').value.trim()}),
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Translation failed');

@@ -2,6 +2,16 @@
 
 Add a `## vX.Y.Z` section before creating each version tag. The Windows release workflow publishes that section as the GitHub release description.
 
+## v1.8.0
+
+### Added
+- Review analysis defaults to Qwen/Qwen2.5-7B-Instruct through Featherless AI on Hugging Face.
+- Translation has its own model setting and continues to default to openai/gpt-oss-120b.
+
+### Fixed
+- The app routes the unsuffixed Qwen2.5-7B-Instruct model ID to its active Hugging Face provider.
+- If Featherless AI is disabled for the account, the app explains what to enable instead of showing a raw HTTP 400 error.
+
 ## v1.7.0
 
 ### Added

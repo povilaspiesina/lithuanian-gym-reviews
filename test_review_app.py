@@ -4,14 +4,25 @@ import json
 import os
 import tempfile
 import unittest
+import urllib.error
 from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
-from review_app import ask_hugging_face, chart_csv, chart_data, connect, coverage_data, export_club_csv, hugging_face_chat, import_csv, review_data, stats, translate_review
+from review_app import ask_hugging_face, chart_csv, chart_data, connect, coverage_data, export_club_csv, hugging_face_chat, import_csv, review_data, routed_model, stats, translate_review
 
 
 class ReviewAppTests(unittest.TestCase):
+    def test_qwen_routes_to_featherless_and_explains_disabled_provider(self):
+        model = routed_model("Qwen/Qwen2.5-7B-Instruct")
+        self.assertEqual(model, "Qwen/Qwen2.5-7B-Instruct:featherless-ai")
+        detail = json.dumps({"error": {"code": "model_not_supported"}}).encode()
+        error = urllib.error.HTTPError("https://router.huggingface.co/v1/chat/completions", 400,
+                                       "Bad Request", {}, io.BytesIO(detail))
+        with patch("review_app.urllib.request.urlopen", side_effect=error):
+            with self.assertRaisesRegex(ValueError, "Enable Featherless AI"):
+                hugging_face_chat({"model": model, "messages": []}, "hf_fake")
+
     def test_hugging_face_rejects_cut_off_output(self):
         incomplete = io.BytesIO(json.dumps({"choices": [{"message": {"content": "partial"},
                                                      "finish_reason": "length"}]}).encode())
@@ -184,6 +195,12 @@ class ReviewAppTests(unittest.TestCase):
                     prompt_body = json.loads(request.call_args.args[0].data)
                     self.assertIn('"author": "A"', prompt_body["messages"][1]["content"])
                     self.assertIn('"owner_reply": "Thanks"', prompt_body["messages"][1]["content"])
+                with patch.dict(os.environ, {"HF_TOKEN": "hf_fake"}):
+                    response = io.BytesIO(json.dumps({"choices": [{"message": {"content": "Issues summarized."}}]}).encode())
+                    with patch("review_app.urllib.request.urlopen", return_value=response) as request:
+                        answer = ask_hugging_face(con, {}, "Summarize", "Qwen/Qwen2.5-7B-Instruct", "summary")
+                    self.assertEqual(answer["model"], "Qwen/Qwen2.5-7B-Instruct:featherless-ai")
+                    self.assertEqual(json.loads(request.call_args.args[0].data)["model"], answer["model"])
                 params = {"period": ["custom"], "start": ["2026-09-01"],
                           "end": ["2026-09-30"], "rating": ["5"], "q": ["clean"]}
                 self.assertEqual(stats(con, params)["review_count"], 1)
