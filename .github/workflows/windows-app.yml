@@ -71,7 +71,7 @@ jobs:
           if (!(Test-Path $manifest)) { throw 'Windows update manifest is missing' }
           if (!(Test-Path $config)) { throw 'Packaged update configuration is missing' }
           if (!(Select-String -Path $manifest -Pattern "Lithuanian-Gym-Reviews-$version-x64.exe" -Quiet)) { throw 'Update manifest does not name the installer' }
-          node -e "if (!require('@electron/asar').list('release/win-unpacked/resources/app.asar').some(x => x.includes('node_modules/electron-updater/out/main.js'))) process.exit(1)"
+          node -e "if (!require('@electron/asar').listPackage('release/win-unpacked/resources/app.asar').some(x => x.includes('node_modules/electron-updater/out/main.js'))) process.exit(1)"
           if ($LASTEXITCODE -ne 0) { throw 'Bundled updater is missing' }
       - name: Smoke test bundled runtime
         shell: pwsh

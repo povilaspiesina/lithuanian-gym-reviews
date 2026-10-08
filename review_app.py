@@ -447,7 +447,9 @@ def hugging_face_chat(prompt, token):
     request = urllib.request.Request(
         "https://router.huggingface.co/v1/chat/completions",
         data=json.dumps(prompt, ensure_ascii=False).encode("utf-8"),
-        headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"},
+        headers={"Authorization": "Bearer " + token, "Content-Type": "application/json",
+                 "Accept": "application/json",
+                 "User-Agent": "LithuanianGymReviews (+https://github.com/povilaspiesina/lithuanian-gym-reviews)"},
         method="POST",
     )
     try:
@@ -468,6 +470,8 @@ def hugging_face_chat(prompt, token):
             code = None
         if code == "model_not_supported" and prompt.get("model", "").startswith("Qwen/Qwen2.5-7B-Instruct"):
             raise ValueError("Qwen2.5-7B-Instruct is served by Featherless AI on Hugging Face, but this account cannot route to it. Enable Featherless AI in Hugging Face Inference Providers settings, then retry. Check available credits if it still fails.") from exc
+        if exc.code == 403 and ("error code: 1010" in detail.lower() or "used cloudflare to restrict access" in detail.lower()):
+            raise ValueError("The inference provider blocked this API request (Cloudflare 1010). The app now identifies itself to the provider; if this still happens, report the provider name and Cloudflare Ray ID to Hugging Face support.") from exc
         raise ValueError(f"Hugging Face returned HTTP {exc.code}: {detail}") from exc
     except (urllib.error.URLError, TimeoutError) as exc:
         raise ValueError(f"Hugging Face connection failed: {exc}") from exc

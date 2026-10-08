@@ -2,11 +2,30 @@
 
 Add a `## vX.Y.Z` section before creating each version tag. The Windows release workflow publishes that section as the GitHub release description.
 
+## v1.9.1
+
+### Added
+- Windows updates can reuse unchanged installer blocks when a differential download is available, with progress shown in the app. Releases include the update manifest and block map.
+
+### Fixed
+- Hugging Face API requests now identify this app. A direct probe showed Python urllib's default user agent gets Cloudflare 1010 from Groq, while the app-identifying header reaches the API.
+- Provider Cloudflare 1010 responses display a short actionable message.
+- Corrected the Windows build's metadata verification check, which prevented v1.9.0 from publishing.
+
+### Upgrade note
+- v1.8.0 downloads v1.9.1 as a full installer once. Later updates can use differential downloads when supported; the updater falls back to a full installer when needed.
+
 ## v1.9.0
+
+The Windows build for this tag failed its metadata verification step, so no v1.9.0 installer was published. Its planned changes are included in v1.9.1.
 
 ### Added
 - Windows updates can download only changed installer blocks when differential download is available. The update prompt shows progress and installs the result from within the app.
 - GitHub releases now include the Windows update manifest and block map needed for differential updates.
+
+### Fixed
+- Hugging Face requests now identify the app instead of using Python urllib's default user agent, which Groq's Cloudflare blocked with HTTP 403 / error 1010 in a direct unauthenticated probe.
+- If a provider still returns Cloudflare 1010, the app shows a short actionable error rather than an HTML page.
 
 ### Changed
 - This version is the transition from the previous full-installer updater. Existing v1.8.0 installations download v1.9.0 once in full; later releases can use differential downloads.

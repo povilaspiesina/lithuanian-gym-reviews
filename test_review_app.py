@@ -13,6 +13,21 @@ from review_app import ask_hugging_face, chart_csv, chart_data, connect, coverag
 
 
 class ReviewAppTests(unittest.TestCase):
+    def test_hugging_face_uses_an_identified_api_request(self):
+        response = io.BytesIO(json.dumps({"choices": [{"message": {"content": "Paris"}, "finish_reason": "stop"}]}).encode())
+        with patch("review_app.urllib.request.urlopen", return_value=response) as send:
+            self.assertEqual(hugging_face_chat({"model": "example", "messages": []}, "hf_fake"), "Paris")
+        request = send.call_args.args[0]
+        self.assertIn("LithuanianGymReviews", request.get_header("User-agent"))
+        self.assertEqual(request.get_header("Accept"), "application/json")
+
+    def test_cloudflare_block_has_a_short_message(self):
+        error = urllib.error.HTTPError("https://router.huggingface.co/v1/chat/completions", 403,
+                                       "Forbidden", {}, io.BytesIO(b"error code: 1010"))
+        with patch("review_app.urllib.request.urlopen", side_effect=error):
+            with self.assertRaisesRegex(ValueError, "Cloudflare 1010"):
+                hugging_face_chat({"model": "example", "messages": []}, "hf_fake")
+
     def test_qwen_routes_to_featherless_and_explains_disabled_provider(self):
         model = routed_model("Qwen/Qwen2.5-7B-Instruct")
         self.assertEqual(model, "Qwen/Qwen2.5-7B-Instruct:featherless-ai")
