@@ -2,7 +2,21 @@
 
 Add a `## vX.Y.Z` section before creating each version tag. The Windows release workflow publishes that section as the GitHub release description.
 
+## v1.9.2
+
+### Added
+- The Windows app can download changed installer blocks for future updates when available. GitHub releases include the required update manifest and block map.
+
+### Fixed
+- Hugging Face API requests identify the app to avoid Cloudflare rejecting Python urllib's default user agent. Cloudflare 1010 errors now show a short explanation.
+- The Windows build verifies the bundled updater using Windows path separators. Earlier v1.9.0 and v1.9.1 build checks failed before publishing installers.
+
+### Upgrade note
+- v1.8.0 downloads v1.9.2 as a full installer once. Later updates can use differential downloads; a full download remains the fallback.
+
 ## v1.9.1
+
+No installer was published for this tag because the Windows metadata verification check failed. The changes are included in v1.9.2.
 
 ### Added
 - Windows updates can reuse unchanged installer blocks when a differential download is available, with progress shown in the app. Releases include the update manifest and block map.
