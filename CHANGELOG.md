@@ -2,7 +2,7 @@
 
 Add a `## vX.Y.Z` section before creating each version tag. The Windows release workflow publishes that section as the GitHub release description.
 
-## v1.10.0
+## v1.9.4
 
 ### Added
 - Named AI prompts can be created from built-in examples, edited, copied, and deleted. They are saved in the local review database.
