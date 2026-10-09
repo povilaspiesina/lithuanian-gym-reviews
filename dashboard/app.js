@@ -15,7 +15,6 @@ let overviewRequest = 0;
 let comparisonData = null, selectedComparisonIndex = null;
 const chainNames = [...new Set(clubs.map(club => club.chain))].sort();
 let selectedScopes = new Set(chainNames.map(chain => `chain:${chain}`));
-let showCombined = false;
 let showAverage = false;
 const logoPaths = {'Gym+':'/assets/gym-plus.svg','Lemon Gym':'/assets/lemon-gym.svg','SportGates':'/assets/sportgates.png'};
 function brandLogo(chain) {
@@ -24,7 +23,7 @@ function brandLogo(chain) {
 }
 function seriesLogo(item) {
   const chain = item.key.startsWith('chain:') ? item.key.slice(6) : item.key.startsWith('club:') ? byId.get(item.key.slice(5))?.chain : '';
-  return chain ? brandLogo(chain) : `<span class="brand-symbol" aria-hidden="true">${item.key === 'average' ? 'AVG' : 'Σ'}</span>`;
+  return chain ? brandLogo(chain) : '<span class="brand-symbol" aria-hidden="true">AVG</span>';
 }
 const aiPresets = {
   issues: {mode:'issues', prompt:'Identify up to five distinct recurring problems. For each, explain the customer experience in plain English and cite one or two specific comments using their [R#] references. Merge overlapping themes. Distinguish repeated reports from isolated ones and make no claims beyond these comments.'},
@@ -120,7 +119,6 @@ function filterFields(includePeriod = true) {
       <div class="scope-actions"><button type="button" data-scopes-action="all">All chains</button><button type="button" data-scopes-action="clear">Clear selection</button></div>
       <div class="scope-chains">${chainNames.map(chain => `<label class="scope-chip"><input type="checkbox" data-scope="chain:${esc(chain)}"> ${brandLogo(chain)} ${esc(chain)}</label>`).join('')}</div>
       <details class="scope-clubs"><summary>Choose individual clubs</summary><input type="search" class="club-search" placeholder="Find a club or city" aria-label="Find a club or city"><div class="club-options">${clubs.filter(club => club.status === 'open').map(club => `<label class="club-option" data-search="${esc(`${club.chain} ${club.club_name} ${club.locality}`.toLowerCase())}"><input type="checkbox" data-scope="club:${esc(club.id)}">${brandLogo(club.chain)}<span>${esc(club.chain)} · ${esc(club.club_name)}<small>${esc(club.locality)}</small></span></label>`).join('')}</div></details>
-      <label class="combined-option"><input type="checkbox" data-combined> Add combined selection <span>(each review counted once; rating weighted by reviews)</span></label>
       <label class="average-option"><input type="checkbox" data-average> Compare with average gym <span>(each chain has equal weight)</span></label>
     </div>
     <div class="filter-main">
@@ -139,12 +137,9 @@ function tomorrowLocal() {
 }
 
 function renderScopeSelections() {
-  if (selectedScopes.size < 2) showCombined = false;
   for (const id of filterIds) {
     const form = document.getElementById(id);
     for (const checkbox of form.querySelectorAll('[data-scope]')) checkbox.checked = selectedScopes.has(checkbox.dataset.scope);
-    form.querySelector('[data-combined]').checked = showCombined;
-    form.querySelector('[data-combined]').disabled = selectedScopes.size < 2;
     form.querySelector('[data-average]').checked = showAverage;
     const chains = [...selectedScopes].filter(scope => scope.startsWith('chain:')).length;
     const clubs = selectedScopes.size - chains;
@@ -173,13 +168,10 @@ for (const id of filterIds) {
   };
   form.updateDateFields = updateDateFields;
   form.addEventListener('change', event => {
-    const scopeChanged = !!event.target.dataset.scope || event.target.hasAttribute('data-combined') || event.target.hasAttribute('data-average');
+    const scopeChanged = !!event.target.dataset.scope || event.target.hasAttribute('data-average');
     if (event.target.dataset.scope) {
       if (event.target.checked) selectedScopes.add(event.target.dataset.scope);
       else selectedScopes.delete(event.target.dataset.scope);
-      renderScopeSelections();
-    } else if (event.target.hasAttribute('data-combined')) {
-      showCombined = event.target.checked;
       renderScopeSelections();
     } else if (event.target.hasAttribute('data-average')) {
       showAverage = event.target.checked;
@@ -205,7 +197,7 @@ for (const id of filterIds) {
     if (event.target.matches('.club-search')) {
       const search = event.target.value.trim().toLowerCase();
       for (const option of form.querySelectorAll('.club-option')) option.hidden = !option.dataset.search.includes(search);
-    } else if (!event.target.matches('[data-scope],[data-combined]')) syncFilters(form);
+    } else if (!event.target.matches('[data-scope]')) syncFilters(form);
   });
   updateDateFields();
   form.onsubmit = event => {
@@ -236,7 +228,6 @@ function query(form) {
   for (const [key, value] of [...params]) if (!value) params.delete(key);
   for (const scope of selectedScopes) params.append('scope', scope);
   if (!selectedScopes.size) params.append('scope','none');
-  if (showCombined) params.set('combined','1');
   if (showAverage && form.id !== 'review-filters') params.set('average','1');
   return params;
 }
@@ -378,7 +369,6 @@ window.addEventListener('message', event => {
 });
 
 function seriesColor(index, key) {
-  if (key === 'combined') return '#263f48';
   if (key === 'average') return '#775ca8';
   const chain = key.startsWith('chain:') ? key.slice(6) : key.startsWith('club:') ? byId.get(key.slice(5))?.chain : '';
   if (key.startsWith('club:')) {
@@ -404,7 +394,7 @@ function seriesLineChart(target, series, rowsFor, key, maximum, unit) {
   const paths = series.map((item,seriesIndex) => {
     const color = seriesColor(seriesIndex,item.key), rowMap = new Map(rowsFor(item).map(row => [row.period,row]));
     const points = periods.flatMap((period,index) => { const row=rowMap.get(period); return row?.[key] == null ? [] : [`${x(index)},${y(row[key])}`]; });
-    const line = points.length > 1 ? `<polyline fill="none" stroke="${color}" stroke-width="3" ${item.key==='combined'?'stroke-dasharray="7 5"':''} points="${points.join(' ')}"/>` : '';
+    const line = points.length > 1 ? `<polyline fill="none" stroke="${color}" stroke-width="3" points="${points.join(' ')}"/>` : '';
     const dots = periods.map((period,index) => { const row=rowMap.get(period); if (row?.[key] == null) return ''; const value = key==='count'?fmt(row[key]):Number(row[key]).toFixed(2)+unit; return `<circle cx="${x(index)}" cy="${y(row[key])}" r="5" fill="${color}" stroke="white" stroke-width="2" tabindex="0" ${target.startsWith('#compare-') ? `data-period-index="${index}"` : ''} data-tip="${esc(`${item.label} · ${period}: ${value} (${fmt(row.count)} reviews)`)}"><title>${esc(`${item.label}: ${value}`)}</title></circle>`; }).join('');
     return line+dots;
   }).join('');
@@ -439,8 +429,8 @@ function difference(current, previous, suffix, betterDirection) {
 function renderCurrentChange(data) {
   const windows = data.current_window;
   const grain = {month:'month',quarter:'quarter',year:'year'}[data.grain] || 'period';
-  $('#current-change-title').textContent = `Current ${grain} vs previous ${grain}`;
-  $('#current-change-note').textContent = `${windows.current_label}: ${windows.current_start}–${windows.current_end} · ${windows.previous_label}: ${windows.previous_start}–${windows.previous_end}. Both windows cover the same elapsed days; Maps dates may be estimated.`;
+  $('#current-change-title').textContent = `${windows.current_label} vs ${windows.previous_label}`;
+  $('#current-change-note').textContent = `Last two completed ${grain}s · ${windows.current_label}: ${windows.current_start}–${windows.current_end} · ${windows.previous_label}: ${windows.previous_start}–${windows.previous_end}. Maps dates may be estimated.`;
   const measures = [
     {key:'average_rating',name:'Average rating',unit:'★',better:1,decimals:2},
     {key:'low_pct',name:'1–2 star share',unit:'pp',better:-1,decimals:1},

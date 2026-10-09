@@ -483,29 +483,29 @@ def average_chain_rows(groups):
 
 
 def current_period_windows(grain, today=None):
-    """Compare elapsed calendar days with the same number of days in the preceding period."""
+    """Return the last two fully completed calendar periods."""
     today = today or date.today()
     if grain == "month":
-        current_start = today.replace(day=1)
-        prior_last = current_start - timedelta(days=1)
-        prior_start = prior_last.replace(day=1)
-        label, prior_label = today.strftime("%Y-%m"), prior_start.strftime("%Y-%m")
+        current_end = today.replace(day=1) - timedelta(days=1)
+        current_start = current_end.replace(day=1)
+        previous_end = current_start - timedelta(days=1)
+        previous_start = previous_end.replace(day=1)
+        label, prior_label = current_start.strftime("%Y-%m"), previous_start.strftime("%Y-%m")
     elif grain == "quarter":
-        current_start = date(today.year, ((today.month - 1) // 3) * 3 + 1, 1)
-        prior_last = current_start - timedelta(days=1)
-        prior_start = date(prior_last.year, ((prior_last.month - 1) // 3) * 3 + 1, 1)
-        label = f"{today.year} Q{(today.month - 1) // 3 + 1}"
-        prior_label = f"{prior_last.year} Q{(prior_last.month - 1) // 3 + 1}"
+        current_end = date(today.year, ((today.month - 1) // 3) * 3 + 1, 1) - timedelta(days=1)
+        current_start = date(current_end.year, ((current_end.month - 1) // 3) * 3 + 1, 1)
+        previous_end = current_start - timedelta(days=1)
+        previous_start = date(previous_end.year, ((previous_end.month - 1) // 3) * 3 + 1, 1)
+        label = f"{current_start.year} Q{(current_start.month - 1) // 3 + 1}"
+        prior_label = f"{previous_start.year} Q{(previous_start.month - 1) // 3 + 1}"
     elif grain == "year":
-        current_start = date(today.year, 1, 1)
-        prior_last = current_start - timedelta(days=1)
-        prior_start = date(today.year - 1, 1, 1)
-        label, prior_label = str(today.year), str(today.year - 1)
+        current_start, current_end = date(today.year - 1, 1, 1), date(today.year - 1, 12, 31)
+        previous_start, previous_end = date(today.year - 2, 1, 1), date(today.year - 2, 12, 31)
+        label, prior_label = str(current_start.year), str(previous_start.year)
     else:
         raise ValueError("Choose monthly, quarterly, or yearly periods")
-    prior_end = min(prior_start + (today - current_start), prior_last)
-    return {"current_start": current_start.isoformat(), "current_end": today.isoformat(),
-            "previous_start": prior_start.isoformat(), "previous_end": prior_end.isoformat(),
+    return {"current_start": current_start.isoformat(), "current_end": current_end.isoformat(),
+            "previous_start": previous_start.isoformat(), "previous_end": previous_end.isoformat(),
             "current_label": label, "previous_label": prior_label}
 
 
@@ -525,7 +525,7 @@ def current_window_stats(con, params, windows):
 
 
 def comparison_series(con, params, mode):
-    """Separate selected entities; the optional combined row is a union of club IDs."""
+    """Return separate selected entities and the optional average gym benchmark."""
     if mode not in {"overview", "periods"}:
         raise ValueError("invalid comparison mode")
     requested = list(dict.fromkeys(params.get("scope", [])))
@@ -534,6 +534,8 @@ def comparison_series(con, params, mode):
         result = {"series": [], "grain": params.get("grain", ["month"])[0]}
         if mode == "overview":
             result.update({"clubs": [], "coverage": coverage_data(con)})
+        else:
+            result["current_window"] = current_period_windows(result["grain"])
         return result
     requested = [scope for scope in requested if scope != "none"]
     if len(requested) > 80:
@@ -551,12 +553,9 @@ def comparison_series(con, params, mode):
             labels[scope] = f'{club["chain"]} · {club["club_name"]} · {club["locality"]}'
         else:
             raise ValueError("unknown comparison selection")
-    combined = params.get("combined", ["0"])[0] == "1"
     common = {key: value for key, value in params.items() if key not in {"scope", "combined", "average", "mode", "grain"}}
     chains = sorted({club["chain"] for club in known.values()})
     scopes = [(scope, labels[scope], [scope]) for scope in requested]
-    if combined and len(requested) > 1:
-        scopes.append(("combined", "Combined selection", requested))
     if mode == "periods":
         grain = params.get("grain", ["month"])[0]
         windows = current_period_windows(grain)

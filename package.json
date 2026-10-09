@@ -1,6 +1,6 @@
 {
   "name": "lithuanian-gym-reviews",
-  "version": "1.10.0",
+  "version": "1.10.1",
   "private": true,
   "description": "Local Lithuanian gym review collector and dashboard",
   "main": "desktop/main.js",

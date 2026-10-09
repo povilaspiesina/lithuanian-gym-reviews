@@ -36,36 +36,39 @@ class ReviewAppTests(unittest.TestCase):
                 baseline_rows = comparison_series(con, {**selected, "grain": ["month"]}, "periods")["series"][1]["rows"]
                 self.assertEqual(next(row["average_rating"] for row in baseline_rows if row["period"] == "2026-08"), 3.33)
 
-    def test_current_period_windows_match_elapsed_days_across_grains(self):
-        for grain, current_start, previous_end in (
-            ("month", "2026-10-01", "2026-09-09"),
-            ("quarter", "2026-10-01", "2026-07-09"),
-            ("year", "2026-01-01", "2025-10-09"),
+    def test_current_period_windows_use_last_two_completed_periods(self):
+        for grain, current_start, current_end, previous_start, previous_end in (
+            ("month", "2026-09-01", "2026-09-30", "2026-08-01", "2026-08-31"),
+            ("quarter", "2026-07-01", "2026-09-30", "2026-04-01", "2026-06-30"),
+            ("year", "2025-01-01", "2025-12-31", "2024-01-01", "2024-12-31"),
         ):
             window = current_period_windows(grain, date(2026, 10, 9))
             self.assertEqual(window["current_start"], current_start)
+            self.assertEqual(window["current_end"], current_end)
+            self.assertEqual(window["previous_start"], previous_start)
             self.assertEqual(window["previous_end"], previous_end)
-            self.assertEqual(window["current_end"], "2026-10-09")
 
-    def test_current_period_comparison_excludes_later_previous_days(self):
+    def test_completed_month_comparison_includes_full_months_and_excludes_current(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             source = root / "reviews.csv"
             source.write_text("club_id,review_id,rating,published_at,text\n"
-                              "gym-vilnius-mokslininku-g-6a,a,5,2026-10-03,Current\n"
-                              "gym-vilnius-mokslininku-g-6a,b,1,2026-09-03,Previous\n"
-                              "gym-vilnius-mokslininku-g-6a,c,5,2026-09-15,Later day\n"
-                              "lemon-gym-vilnius-sauletekio-al-17,d,1,2026-10-03,Other chain\n", encoding="utf-8")
+                              "gym-vilnius-mokslininku-g-6a,a,5,2026-10-03,Incomplete month\n"
+                              "gym-vilnius-mokslininku-g-6a,b,1,2026-09-03,September early\n"
+                              "gym-vilnius-mokslininku-g-6a,c,5,2026-09-30,September late\n"
+                              "gym-vilnius-mokslininku-g-6a,d,2,2026-08-03,August early\n"
+                              "gym-vilnius-mokslininku-g-6a,e,4,2026-08-31,August late\n"
+                              "lemon-gym-vilnius-sauletekio-al-17,f,1,2026-09-03,Other chain\n", encoding="utf-8")
             with closing(connect(root / "reviews.sqlite3")) as con:
                 import_csv(con, source)
                 result = current_window_stats(con, {"scope": ["chain:Gym+"]},
                                               current_period_windows("month", date(2026, 10, 9)))
-                self.assertEqual(result["current"]["review_count"], 1)
-                self.assertEqual(result["previous"]["review_count"], 1)
-                self.assertEqual(result["current"]["average_rating"], 5)
-                self.assertEqual(result["previous"]["average_rating"], 1)
+                self.assertEqual(result["current"]["review_count"], 2)
+                self.assertEqual(result["previous"]["review_count"], 2)
+                self.assertEqual(result["current"]["average_rating"], 3)
+                self.assertEqual(result["previous"]["average_rating"], 3)
 
-    def test_selected_chains_clubs_and_combined_series(self):
+    def test_selected_chains_and_clubs_remain_separate(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             first = "gym-vilnius-mokslininku-g-6a"
@@ -79,14 +82,16 @@ class ReviewAppTests(unittest.TestCase):
                 import_csv(con, source)
                 scopes = {"scope": ["chain:Gym+", f"club:{first}"], "combined": ["1"]}
                 overview = comparison_series(con, scopes, "overview")
-                self.assertEqual([item["stats"]["review_count"] for item in overview["series"]], [3, 2, 3])
-                self.assertEqual(overview["series"][2]["label"], "Combined selection")
+                self.assertEqual([item["stats"]["review_count"] for item in overview["series"]], [3, 2])
                 self.assertEqual([item["stats"]["review_count"] for item in
                                   comparison_series(con, {"scope": [f"club:{first}", f"club:{second}"]}, "overview")["series"]], [2, 1])
                 self.assertEqual(comparison_series(con, {"scope": ["none"]}, "overview")["series"], [])
+                empty_periods = comparison_series(con, {"scope": ["none"], "grain": ["month"]}, "periods")
+                self.assertEqual(empty_periods["series"], [])
+                self.assertIn("current_window", empty_periods)
                 periods = comparison_series(con, {**scopes, "grain": ["month"]}, "periods")
                 self.assertEqual([next(row["count"] for row in item["rows"] if row["period"] == "2026-08")
-                                  for item in periods["series"]], [3, 2, 3])
+                                  for item in periods["series"]], [3, 2])
 
     def test_custom_date_stops_at_tomorrow(self):
         tomorrow = date.today() + timedelta(days=1)

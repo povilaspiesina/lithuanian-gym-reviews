@@ -2,6 +2,15 @@
 
 Add a `## vX.Y.Z` section before creating each version tag. The Windows release workflow publishes that section as the GitHub release description.
 
+## v1.10.1
+
+### Fixed
+- The comparison bars at the bottom of Trends now use the last two fully completed calendar periods. In October 2026, monthly view compares September with August, quarterly view compares Q3 with Q2, and yearly view compares 2025 with 2024. CSV exports use the same full periods.
+- Clearing all gym selections no longer breaks the Trends comparison view.
+
+### Changed
+- Removed the Combined selection checkbox and its series. Individual gyms remain separate, and Average gym remains available as a benchmark.
+
 ## v1.10.0
 
 ### Added
