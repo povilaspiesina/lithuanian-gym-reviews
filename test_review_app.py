@@ -10,10 +10,61 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
-from review_app import analyze_full_batch, ask_hugging_face, chart_csv, chart_data, combine_ai_summaries, comparison_series, connect, coverage_data, delete_prompt_preset, enforce_english_answer, export_club_csv, filters, hugging_face_chat, import_csv, period_comparison_data, prompt_presets, review_data, routed_model, save_prompt_preset, stats, translate_review
+from review_app import analyze_full_batch, ask_hugging_face, chart_csv, chart_data, combine_ai_summaries, comparison_series, connect, coverage_data, current_period_windows, current_window_stats, delete_prompt_preset, enforce_english_answer, export_club_csv, filters, hugging_face_chat, import_csv, period_comparison_data, prompt_presets, review_data, routed_model, save_prompt_preset, stats, translate_review
 
 
 class ReviewAppTests(unittest.TestCase):
+    def test_average_gym_weights_each_chain_equally_and_ignores_selected_scopes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "reviews.csv"
+            source.write_text("club_id,review_id,rating,published_at,text\n"
+                              "gym-vilnius-mokslininku-g-6a,a,1,2026-08-01,Bad\n"
+                              "gym-vilnius-mokslininku-g-6a,b,1,2026-08-01,Bad\n"
+                              "lemon-gym-vilnius-sauletekio-al-17,c,5,2026-08-01,Great\n"
+                              "sportgates-vilnius-verkiu-g-31c,d,4,2026-08-01,Good\n", encoding="utf-8")
+            with closing(connect(root / "reviews.sqlite3")) as con:
+                import_csv(con, source)
+                selected = {"scope": ["chain:Gym+"], "average": ["1"]}
+                result = comparison_series(con, selected, "overview")
+                self.assertEqual([item["label"] for item in result["series"]], ["Gym+", "Average gym"])
+                self.assertEqual(result["series"][1]["stats"]["average_rating"], 3.33)
+                self.assertEqual(result["series"][1]["stats"]["review_count"], 1.33)
+                self.assertEqual(result["series"][1]["stats"]["ratings_pct"]["1"], 33.33)
+                self.assertEqual(result["series"][1]["trend"][0]["average_rating"], 3.33)
+                self.assertEqual(comparison_series(con, {"scope": ["none"], "average": ["1"]}, "overview")["series"][0]["label"], "Average gym")
+                baseline_rows = comparison_series(con, {**selected, "grain": ["month"]}, "periods")["series"][1]["rows"]
+                self.assertEqual(next(row["average_rating"] for row in baseline_rows if row["period"] == "2026-08"), 3.33)
+
+    def test_current_period_windows_match_elapsed_days_across_grains(self):
+        for grain, current_start, previous_end in (
+            ("month", "2026-10-01", "2026-09-09"),
+            ("quarter", "2026-10-01", "2026-07-09"),
+            ("year", "2026-01-01", "2025-10-09"),
+        ):
+            window = current_period_windows(grain, date(2026, 10, 9))
+            self.assertEqual(window["current_start"], current_start)
+            self.assertEqual(window["previous_end"], previous_end)
+            self.assertEqual(window["current_end"], "2026-10-09")
+
+    def test_current_period_comparison_excludes_later_previous_days(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "reviews.csv"
+            source.write_text("club_id,review_id,rating,published_at,text\n"
+                              "gym-vilnius-mokslininku-g-6a,a,5,2026-10-03,Current\n"
+                              "gym-vilnius-mokslininku-g-6a,b,1,2026-09-03,Previous\n"
+                              "gym-vilnius-mokslininku-g-6a,c,5,2026-09-15,Later day\n"
+                              "lemon-gym-vilnius-sauletekio-al-17,d,1,2026-10-03,Other chain\n", encoding="utf-8")
+            with closing(connect(root / "reviews.sqlite3")) as con:
+                import_csv(con, source)
+                result = current_window_stats(con, {"scope": ["chain:Gym+"]},
+                                              current_period_windows("month", date(2026, 10, 9)))
+                self.assertEqual(result["current"]["review_count"], 1)
+                self.assertEqual(result["previous"]["review_count"], 1)
+                self.assertEqual(result["current"]["average_rating"], 5)
+                self.assertEqual(result["previous"]["average_rating"], 1)
+
     def test_selected_chains_clubs_and_combined_series(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

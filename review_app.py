@@ -447,16 +447,95 @@ def period_comparison_data(con, params, grain, today=None):
     return {"grain": grain, "rows": rows, "complete_periods_only": True}
 
 
+def mean(values):
+    available = [value for value in values if value is not None]
+    return round(sum(available) / len(available), 2) if available else None
+
+
+def average_chain_stats(items):
+    """Each of the three chains has equal weight, including chains with no reviews."""
+    keys = ("review_count", "written_count", "low_rating_count", "replied_count", "low_rating_replied_count")
+    result = {key: mean([item[key] for item in items]) for key in keys}
+    result["average_rating"] = mean([item["average_rating"] for item in items])
+    result["ratings"] = {str(star): mean([item["ratings"][str(star)] for item in items]) for star in range(1, 6)}
+    result["ratings_pct"] = {str(star): mean([round(100 * item["ratings"][str(star)] / item["review_count"], 2)
+                                             if item["review_count"] else None for item in items])
+                             for star in range(1, 6)}
+    for field, numerator, denominator in (
+        ("written_pct", "written_count", "review_count"),
+        ("low_pct", "low_rating_count", "review_count"),
+        ("reply_pct", "replied_count", "review_count"),
+        ("low_reply_pct", "low_rating_replied_count", "low_rating_count"),
+    ):
+        result[field] = mean([round(100 * item[numerator] / item[denominator], 2)
+                              if item[denominator] else None for item in items])
+    return result
+
+
+def average_chain_rows(groups):
+    periods = [row["period"] for row in groups[0]] if groups else []
+    rows = []
+    for index, period in enumerate(periods):
+        pieces = [group[index] for group in groups]
+        rows.append({"period": period, **{key: mean([part[key] for part in pieces]) for key in
+                   ("count", "average_rating", "low_pct", "reply_pct", "written_pct")}})
+    return rows
+
+
+def current_period_windows(grain, today=None):
+    """Compare elapsed calendar days with the same number of days in the preceding period."""
+    today = today or date.today()
+    if grain == "month":
+        current_start = today.replace(day=1)
+        prior_last = current_start - timedelta(days=1)
+        prior_start = prior_last.replace(day=1)
+        label, prior_label = today.strftime("%Y-%m"), prior_start.strftime("%Y-%m")
+    elif grain == "quarter":
+        current_start = date(today.year, ((today.month - 1) // 3) * 3 + 1, 1)
+        prior_last = current_start - timedelta(days=1)
+        prior_start = date(prior_last.year, ((prior_last.month - 1) // 3) * 3 + 1, 1)
+        label = f"{today.year} Q{(today.month - 1) // 3 + 1}"
+        prior_label = f"{prior_last.year} Q{(prior_last.month - 1) // 3 + 1}"
+    elif grain == "year":
+        current_start = date(today.year, 1, 1)
+        prior_last = current_start - timedelta(days=1)
+        prior_start = date(today.year - 1, 1, 1)
+        label, prior_label = str(today.year), str(today.year - 1)
+    else:
+        raise ValueError("Choose monthly, quarterly, or yearly periods")
+    prior_end = min(prior_start + (today - current_start), prior_last)
+    return {"current_start": current_start.isoformat(), "current_end": today.isoformat(),
+            "previous_start": prior_start.isoformat(), "previous_end": prior_end.isoformat(),
+            "current_label": label, "previous_label": prior_label}
+
+
+def current_window_stats(con, params, windows):
+    common = {key: value for key, value in params.items() if key not in {"period", "start", "end"}}
+    result = {}
+    for side, first, last in (("current", "current_start", "current_end"),
+                              ("previous", "previous_start", "previous_end")):
+        result[side] = stats(con, {**common, "period": ["custom"],
+                                   "start": [windows[first]], "end": [windows[last]]})
+        item = result[side]
+        count = item["review_count"]
+        item["low_pct"] = round(100 * item["low_rating_count"] / count, 2) if count else None
+        item["reply_pct"] = round(100 * item["replied_count"] / count, 2) if count else None
+        item["written_pct"] = round(100 * item["written_count"] / count, 2) if count else None
+    return result
+
+
 def comparison_series(con, params, mode):
     """Separate selected entities; the optional combined row is a union of club IDs."""
     if mode not in {"overview", "periods"}:
         raise ValueError("invalid comparison mode")
     requested = list(dict.fromkeys(params.get("scope", [])))
-    if not requested or requested == ["none"]:
+    include_average = params.get("average", ["0"])[0] == "1"
+    if (not requested or requested == ["none"]) and not include_average:
         result = {"series": [], "grain": params.get("grain", ["month"])[0]}
         if mode == "overview":
             result.update({"clubs": [], "coverage": coverage_data(con)})
         return result
+    requested = [scope for scope in requested if scope != "none"]
     if len(requested) > 80:
         raise ValueError("too many comparison selections")
     known = {club["id"]: club for club in clubs()}
@@ -473,18 +552,28 @@ def comparison_series(con, params, mode):
         else:
             raise ValueError("unknown comparison selection")
     combined = params.get("combined", ["0"])[0] == "1"
-    common = {key: value for key, value in params.items() if key not in {"scope", "combined", "mode", "grain"}}
+    common = {key: value for key, value in params.items() if key not in {"scope", "combined", "average", "mode", "grain"}}
+    chains = sorted({club["chain"] for club in known.values()})
     scopes = [(scope, labels[scope], [scope]) for scope in requested]
     if combined and len(requested) > 1:
         scopes.append(("combined", "Combined selection", requested))
     if mode == "periods":
         grain = params.get("grain", ["month"])[0]
+        windows = current_period_windows(grain)
         series = []
         for key, label, members in scopes:
             scoped = {**common, "scope": members}
-            series.append({"key": key, "label": label, "rows": period_comparison_data(con, scoped, grain)["rows"]})
-        return {"grain": grain, "series": series}
-    all_params = {**common, "scope": requested}
+            series.append({"key": key, "label": label, "rows": period_comparison_data(con, scoped, grain)["rows"],
+                           "current_change": current_window_stats(con, scoped, windows)})
+        if include_average:
+            chain_params = [{**common, "scope": [f"chain:{chain}"]} for chain in chains]
+            chain_changes = [current_window_stats(con, item, windows) for item in chain_params]
+            series.append({"key": "average", "label": "Average gym",
+                           "rows": average_chain_rows([period_comparison_data(con, item, grain)["rows"] for item in chain_params]),
+                           "current_change": {side: average_chain_stats([item[side] for item in chain_changes])
+                                              for side in ("current", "previous")}})
+        return {"grain": grain, "series": series, "current_window": windows}
+    all_params = {**common, "scope": requested or [f"chain:{chain}" for chain in chains]}
     where, values = filters(all_params)
     first, last = con.execute("SELECT MIN(published_at), MAX(published_at) FROM reviews" + where, values).fetchone()
     if first:
@@ -501,6 +590,24 @@ def comparison_series(con, params, mode):
             "ROUND(AVG(rating),2) AS average_rating FROM reviews" + item_where +
             " GROUP BY period ORDER BY period", item_values)]
         series.append({"key": key, "label": label, "stats": stats(con, scoped), "trend": trend})
+    if include_average:
+        chain_params = [{**common, "scope": [f"chain:{chain}"]} for chain in chains]
+        chain_trends = []
+        for scoped in chain_params:
+            item_where, item_values = filters(scoped)
+            chain_trends.append([dict(row) for row in con.execute(
+                f"SELECT SUBSTR(published_at,1,{length}) AS period, COUNT(*) AS count, "
+                "ROUND(AVG(rating),2) AS average_rating FROM reviews" + item_where +
+                " GROUP BY period ORDER BY period", item_values)])
+        periods = sorted({row["period"] for group in chain_trends for row in group})
+        aligned = [{row["period"]: row for row in group} for group in chain_trends]
+        average_trend = [{"period": period,
+                          "count": mean([group.get(period, {}).get("count", 0) for group in aligned]),
+                          "average_rating": mean([group.get(period, {}).get("average_rating") for group in aligned])}
+                         for period in periods]
+        series.append({"key": "average", "label": "Average gym",
+                       "stats": average_chain_stats([stats(con, scoped) for scoped in chain_params]),
+                       "trend": average_trend})
     return {"grain": grain, "series": series, "clubs": chart_data(con, all_params)["clubs"],
             "coverage": coverage_data(con)}
 
@@ -846,9 +953,13 @@ def make_handler(db_path):
                     directory_json = json.dumps(clubs(), ensure_ascii=False).replace("</", "<\\/")
                     page = PAGE_FILE.read_text(encoding="utf-8").replace("CLUBS_JSON", directory_json)
                     self.send_bytes(page.encode("utf-8"), "text/html; charset=utf-8")
-                elif parsed.path in {"/app.css", "/app.js", "/vendor/marked.umd.js", "/vendor/purify.min.js"}:
+                elif parsed.path in {"/app.css", "/app.js", "/vendor/marked.umd.js", "/vendor/purify.min.js",
+                                     "/assets/lemon-gym.svg", "/assets/gym-plus.svg", "/assets/gym-plus-light.svg",
+                                     "/assets/sportgates.png"}:
                     file = PAGE_FILE.parent / parsed.path.lstrip("/")
-                    content_type = "text/css; charset=utf-8" if file.suffix == ".css" else "text/javascript; charset=utf-8"
+                    content_type = ("text/css; charset=utf-8" if file.suffix == ".css" else
+                                    "image/svg+xml" if file.suffix == ".svg" else
+                                    "image/png" if file.suffix == ".png" else "text/javascript; charset=utf-8")
                     self.send_bytes(file.read_bytes(), content_type)
                 elif parsed.path == "/api/data":
                     offset = int(params.get("offset", ["0"])[0])
@@ -875,18 +986,34 @@ def make_handler(db_path):
                         writer = csv.writer(output)
                         kind = params.get("kind", ["periods" if mode == "periods" else "volume"])[0]
                         if mode == "periods":
-                            writer.writerow(["selection", "period", "reviews", "average_rating", "one_two_star_pct", "owner_reply_pct", "written_comment_pct"])
-                            for item in payload["series"]:
-                                writer.writerows((item["label"], row["period"], row["count"], row["average_rating"],
-                                                  row["low_pct"], row["reply_pct"], row["written_pct"]) for row in item["rows"])
+                            if kind == "current_change":
+                                writer.writerow(["selection", "window", "from", "to", "reviews", "average_rating", "one_two_star_pct", "owner_reply_pct"])
+                                windows = payload["current_window"]
+                                for item in payload["series"]:
+                                    for side, prefix in (("previous", "previous"), ("current", "current")):
+                                        row = item["current_change"][side]
+                                        writer.writerow((item["label"], windows[f"{prefix}_label"], windows[f"{prefix}_start"],
+                                                         windows[f"{prefix}_end"], row["review_count"], row["average_rating"],
+                                                         row["low_pct"], row["reply_pct"]))
+                            elif kind == "periods":
+                                writer.writerow(["selection", "period", "reviews", "average_rating", "one_two_star_pct", "owner_reply_pct", "written_comment_pct"])
+                                for item in payload["series"]:
+                                    writer.writerows((item["label"], row["period"], row["count"], row["average_rating"],
+                                                      row["low_pct"], row["reply_pct"], row["written_pct"]) for row in item["rows"])
+                            else:
+                                raise ValueError("invalid comparison export")
                         elif kind in {"volume", "rating_trend"}:
                             writer.writerow(["selection", "period", "reviews", "average_rating"])
                             for item in payload["series"]:
                                 writer.writerows((item["label"], row["period"], row["count"], row["average_rating"]) for row in item["trend"])
                         elif kind == "distribution":
-                            writer.writerow(["selection", "stars", "reviews"])
+                            writer.writerow(["selection", "stars", "reviews", "share_pct"])
                             for item in payload["series"]:
-                                writer.writerows((item["label"], star, item["stats"]["ratings"][str(star)]) for star in range(1, 6))
+                                summary = item["stats"]
+                                writer.writerows((item["label"], star, summary["ratings"][str(star)],
+                                                  summary.get("ratings_pct", {}).get(str(star),
+                                                      round(100 * summary["ratings"][str(star)] / summary["review_count"], 2)
+                                                      if summary["review_count"] else None)) for star in range(1, 6))
                         elif kind == "selected":
                             writer.writerow(["selection", "reviews", "average_rating", "written_comments", "one_two_star_reviews", "owner_replies", "replies_to_one_two_star"])
                             for item in payload["series"]:
@@ -1021,6 +1148,8 @@ def main():
         print(f"{count} reviews in {args.db}")
     elif args.command == "self-test":
         for file in (PAGE_FILE, PAGE_FILE.parent / "app.css", PAGE_FILE.parent / "app.js",
+                     PAGE_FILE.parent / "assets" / "lemon-gym.svg", PAGE_FILE.parent / "assets" / "gym-plus.svg",
+                     PAGE_FILE.parent / "assets" / "sportgates.png",
                      PAGE_FILE.parent / "vendor" / "marked.umd.js", PAGE_FILE.parent / "vendor" / "purify.min.js"):
             if not file.is_file() or file.stat().st_size == 0:
                 raise SystemExit(f"Missing dashboard asset: {file}")

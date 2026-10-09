@@ -2,6 +2,17 @@
 
 Add a `## vX.Y.Z` section before creating each version tag. The Windows release workflow publishes that section as the GitHub release description.
 
+## v1.10.0
+
+### Added
+- Gym+, Lemon Gym, and SportGates logos appear beside gym names throughout the dashboard. Lemon Gym uses a consistent yellow series in cards, charts, and selection controls.
+- A separate Average gym checkbox adds an equal-weight average of all three chains, independent of which chains or clubs are selected. It can be compared with individual gyms and exported to CSV.
+- Trends now includes a current month, quarter, or year comparison against the same number of elapsed days in the preceding period. Green and red bars show changes in rating, low-star share, owner replies, and review volume, with exact values on hover and CSV export.
+
+### Changed
+- Filters on Overview, Trends, and Reviews & AI can be collapsed and expanded without losing their selections.
+- The existing Combined selection remains a distinct review-weighted total of selected gyms; the new Average gym gives each chain equal weight.
+
 ## v1.9.7
 
 ### Added

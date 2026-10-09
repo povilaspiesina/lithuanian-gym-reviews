@@ -12,7 +12,7 @@
 </head>
 <body>
   <header class="page-header">
-    <div><h1>Lithuanian gym reviews</h1><p>Gym+ · Lemon Gym · SportGates</p></div>
+    <div><h1>Lithuanian gym reviews</h1><p class="header-brands"><span><img src="/assets/gym-plus-light.svg" alt="">Gym+</span><span><img src="/assets/lemon-gym.svg" alt="">Lemon Gym</span><span><img src="/assets/sportgates.png" alt="">SportGates</span></p></div>
     <nav aria-label="Dashboard sections">
       <button type="button" class="nav-active" data-view="overview">Overview</button>
       <button type="button" data-view="trends">Trends</button>
@@ -23,7 +23,7 @@
   <main>
     <section id="overview-view" class="view">
       <div class="section-head"><div><h2>Overview</h2><p>Compare ratings, volume and replies.</p></div><span class="updated" id="overview-updated"></span></div>
-      <form id="overview-filters" class="filters"></form>
+      <details class="filter-panel" open><summary>Filters <span class="filter-summary">Choose gyms, dates, and review details</span></summary><form id="overview-filters" class="filters"></form></details>
       <div class="entity-cards" id="overview-series-cards"></div>
       <p class="quality-note" id="overview-quality"></p>
       <div class="charts">
@@ -38,7 +38,7 @@
     </section>
     <section id="trends-view" class="view" hidden>
       <div class="section-head"><div><h2>Trends</h2><p>Compare completed months, quarters, or years. Select a period to inspect its change from the one before it.</p></div><span class="updated" id="trends-updated"></span></div>
-      <form id="trends-filters" class="filters"></form>
+      <details class="filter-panel" open><summary>Filters <span class="filter-summary">Choose gyms and review details</span></summary><form id="trends-filters" class="filters"></form></details>
       <div class="trends-toolbar"><label>Compare by <select id="comparison-grain"><option value="month">Month</option><option value="quarter">Quarter</option><option value="year">Year</option></select></label><a id="period-export" class="export" href="#">Export period data CSV</a></div>
       <div class="trend-insight" id="period-summary" role="status">Loading trends…</div>
       <div class="trend-kpis" id="trend-kpis"></div>
@@ -51,6 +51,7 @@
       <section class="card trend-table-card"><div class="card-head"><h3 id="period-details-title">Period details</h3><p class="hint">Click a chart point to inspect that period for each selected gym.</p></div>
         <div class="table-wrap"><table class="period-table"><thead><tr><th>Gym</th><th>Reviews</th><th>Change</th><th>Average ★</th><th>Change</th><th>1–2 ★</th><th>Change</th><th>Owner replies</th><th>Change</th></tr></thead><tbody id="period-rows"></tbody></table></div>
       </section>
+      <section class="card current-change"><div class="card-head"><div><h3 id="current-change-title">Current period vs previous</h3><p class="hint" id="current-change-note"></p></div><a id="current-change-export" class="export" href="#">Export CSV</a></div><div class="change-panels" id="current-change-panels"></div></section>
       <p class="quality-note">A rating increase or fewer low ratings describes reviews received, not a proven change in gym quality. Google Maps dates may be estimated. Small review counts can make changes look dramatic.</p>
     </section>
     <section id="collection-view" class="view" hidden>
@@ -70,7 +71,7 @@
     </section>
     <section id="reviews-view" class="view" hidden>
       <div class="section-head"><div><h2>Reviews &amp; AI</h2><p>Read comments and owner replies, then analyze a sample or every matching comment.</p></div><span class="updated" id="reviews-updated"></span></div>
-      <form id="review-filters" class="filters"></form>
+      <details class="filter-panel" open><summary>Filters <span class="filter-summary">Choose gyms, dates, and review details</span></summary><form id="review-filters" class="filters"></form></details>
       <section class="card ai-card"><div class="card-head"><h3>Hugging Face analysis</h3><span class="hint">Selected review text is sent only when you click Analyze. Free credits are limited; <a href="https://huggingface.co/docs/inference-providers/pricing" target="_blank" rel="noopener noreferrer">check usage and pricing</a>.</span></div>
         <div class="ai-controls"><label>Analysis model<select id="ai-model"><option value="Qwen/Qwen2.5-7B-Instruct:featherless-ai">Qwen 2.5 7B · Featherless</option><option value="openai/gpt-oss-20b:cheapest">GPT-OSS 20B · cheapest provider</option><option value="openai/gpt-oss-120b:cheapest">GPT-OSS 120B · cheapest provider</option><option value="custom">Other model ID…</option></select></label><label>Choose a prompt<select id="ai-mode"></select></label></div>
         <div class="ai-options"><label id="custom-model-label" hidden>Custom Hugging Face model ID<input id="ai-custom-model" spellcheck="false" placeholder="owner/model:provider"></label><label>Answer language<select id="ai-language"><option value="en">English</option><option value="lt">Lithuanian</option></select></label><label>Review scope<select id="ai-scope"><option value="sample">Balanced sample · faster</option><option value="all">All matching comments · many requests</option></select></label></div>
