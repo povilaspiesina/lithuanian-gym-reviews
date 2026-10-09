@@ -32,6 +32,11 @@
         <div class="card metric">Replies to 1–2 ★<b id="low-reply">—</b><small>of 1–2 star reviews</small></div>
       </div>
       <p class="quality-note" id="overview-quality"></p>
+      <section class="card period-card"><div class="card-head"><div><h3>Change over time</h3><p class="hint">Compare completed calendar periods for the selected gyms and review filters. The date range above does not limit this comparison.</p></div><div class="period-controls"><label>Compare by <select id="comparison-grain"><option value="month">Month</option><option value="quarter">Quarter</option><option value="year">Year</option></select></label><a id="period-export" class="export" href="#">Export CSV</a></div></div>
+        <div id="period-summary" class="period-summary" role="status"></div>
+        <div class="table-wrap"><table class="period-table"><thead><tr><th>Period</th><th>Reviews</th><th>Change</th><th>Average ★</th><th>Change</th><th>1–2 ★</th><th>Change</th><th>Owner replies</th><th>Change</th></tr></thead><tbody id="period-rows"></tbody></table></div>
+        <p class="hint">A rating increase or fewer low ratings describes the reviews received, not a proven change in club quality. Google Maps dates can be estimated.</p>
+      </section>
       <div class="charts">
         <section class="card chart"><div class="card-head"><h3>Rating distribution</h3><a data-export="distribution" class="export" href="#">Export CSV</a></div><p class="hint">Click a rating to filter the overview.</p><div id="distribution"></div></section>
         <section class="card chart"><div class="card-head"><h3>Review volume over time</h3><a data-export="volume" class="export" href="#">Export CSV</a></div><p class="hint" id="trend-note"></p><div id="trend"></div></section>
@@ -58,7 +63,7 @@
       </section>
     </section>
     <section id="reviews-view" class="view" hidden>
-      <div class="section-head"><div><h2>Reviews &amp; AI</h2><p>Read comments, owner replies, and ask questions about a sample.</p></div><span class="updated" id="reviews-updated"></span></div>
+      <div class="section-head"><div><h2>Reviews &amp; AI</h2><p>Read comments and owner replies, then analyze a sample or every matching comment.</p></div><span class="updated" id="reviews-updated"></span></div>
       <form id="review-filters" class="filters"></form>
       <section class="card ai-card"><div class="card-head"><h3>Hugging Face analysis</h3><span class="hint">Selected review text is sent only when you click Analyze. Free credits are limited; <a href="https://huggingface.co/docs/inference-providers/pricing" target="_blank" rel="noopener noreferrer">check usage and pricing</a>.</span></div>
         <div class="ai-controls"><label>Analysis model<select id="ai-model"><option value="Qwen/Qwen2.5-7B-Instruct:featherless-ai">Qwen 2.5 7B · Featherless</option><option value="openai/gpt-oss-20b:cheapest">GPT-OSS 20B · cheapest provider</option><option value="openai/gpt-oss-120b:cheapest">GPT-OSS 120B · cheapest provider</option><option value="custom">Other model ID…</option></select></label><label>Choose a prompt<select id="ai-mode"></select></label></div>
@@ -66,8 +71,9 @@
         <p class="hint" id="ai-scope-note">A balanced sample includes up to 60 complete written comments. The result shows how many matched and how many were analyzed. To analyze every matching comment, choose “All matching comments”; this can take many minutes and use substantial Hugging Face credits.</p>
         <p class="hint">Model availability depends on your enabled <a href="https://huggingface.co/settings/inference-providers" target="_blank" rel="noopener noreferrer">Hugging Face providers</a>.</p>
         <div class="prompt-editor"><p id="prompt-description" class="hint"></p><div class="prompt-name-row"><label>Prompt name<input id="prompt-name" maxlength="80" placeholder="e.g. Monthly manager brief"></label><div class="prompt-buttons"><button id="prompt-save" type="button" class="primary">Save as new</button><button id="prompt-copy" type="button" hidden>Save a copy</button><button id="prompt-delete" type="button" hidden>Delete saved prompt</button></div></div><label>Instructions for the AI<textarea id="ai-question" rows="5"></textarea></label><p id="prompt-status" class="hint" role="status">Built-in prompts can be edited and saved under your own name.</p></div>
-        <div class="ai-actions"><button id="ai-run" type="button" class="primary">Analyze selected reviews</button><button id="ai-cancel" type="button" hidden>Stop after this batch</button><span id="ai-status" class="hint">Use “Hugging Face token” in the desktop toolbar to connect your account.</span></div>
+        <div class="ai-actions"><button id="ai-run" type="button" class="primary">Analyze selected reviews</button><button id="ai-cancel" type="button" hidden>Stop after this batch</button><span id="ai-status" class="hint">Use Settings → AI → Manage token in the desktop app to connect your account.</span></div>
         <div id="ai-result" class="ai-result" hidden></div>
+        <details id="ai-evidence" class="ai-evidence" hidden><summary id="ai-evidence-title">Comments behind this answer</summary><p id="ai-evidence-note" class="hint"></p><div id="ai-evidence-list"></div></details>
       </section>
       <div class="card-head review-head"><h3>Reviews <span id="review-count" class="muted"></span></h3><div class="review-tools"><label>Translate to <select id="translation-language"><option value="en">English</option><option value="lt">Lithuanian</option></select></label><label>Translation model <input id="translation-model" value="openai/gpt-oss-120b:cheapest" spellcheck="false"></label><a class="export" id="reviews-export" href="/export.csv">Export filtered reviews CSV</a></div></div>
       <div id="reviews"></div>

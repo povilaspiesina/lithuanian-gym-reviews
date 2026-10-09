@@ -1,6 +1,6 @@
 {
   "name": "lithuanian-gym-reviews",
-  "version": "1.9.4",
+  "version": "1.9.5",
   "private": true,
   "description": "Local Lithuanian gym review collector and dashboard",
   "main": "desktop/main.js",
@@ -20,7 +20,13 @@
   "build": {
     "appId": "lt.gymreviews.desktop",
     "productName": "Lithuanian Gym Reviews",
-    "publish": [{ "provider": "github", "owner": "povilaspiesina", "repo": "lithuanian-gym-reviews" }],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "povilaspiesina",
+        "repo": "lithuanian-gym-reviews"
+      }
+    ],
     "directories": {
       "output": "release"
     },

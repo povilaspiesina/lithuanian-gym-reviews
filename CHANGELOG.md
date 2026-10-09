@@ -2,6 +2,17 @@
 
 Add a `## vX.Y.Z` section before creating each version tag. The Windows release workflow publishes that section as the GitHub release description.
 
+## v1.9.5
+
+### Added
+- Overview compares completed months, quarters, and years for the selected gyms, including review volume, average rating, low-star share, owner replies, period changes, and CSV export.
+- AI answers use short comment references. Select a reference to read the full archived comment and owner reply in the same view.
+- Desktop Settings groups Maps collection, local data, AI connection, and app updates in a dedicated window.
+
+### Changed
+- Custom date fields keep a reserved place in the filter bar, so switching periods no longer moves other filters. Dates after tomorrow are rejected in both the form and API.
+- Built-in analysis prompts ask for distinct, relevant findings backed by specific comments. Internal review IDs are no longer sent to the model.
+
 ## v1.9.4
 
 ### Added

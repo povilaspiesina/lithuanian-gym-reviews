@@ -49,7 +49,10 @@ async function start(mode) {
 
 $('collect').onclick = () => start('missing');
 $('refresh').onclick = () => start('refresh');
-$('login').onclick = () => start('login');
+$('settings-open').onclick = () => $('settings-dialog').showModal();
+$('settings-close').onclick = () => $('settings-dialog').close();
+$('settings-dialog').onclick = event => { if (event.target === $('settings-dialog')) $('settings-dialog').close(); };
+$('login').onclick = () => { $('settings-dialog').close(); start('login'); };
 $('finish-login').onclick = async () => {
   const result = await window.gymApp.finishLogin();
   if (result.ok) appendLog('Maps sign-in confirmed. You can now collect or refresh reviews.');
@@ -93,14 +96,14 @@ async function checkUpdates(manual) {
     }
   } finally { updateCheckPending = false; if (!running) $('status').textContent = 'Ready'; }
 }
-$('check-updates').onclick = () => checkUpdates(true);
+$('check-updates').onclick = () => { $('settings-dialog').close(); checkUpdates(true); };
 $('update-close').onclick = () => $('update-dialog').close();
 $('collector-size').onchange = async () => {
   const result = await window.gymApp.setCollectorSize($('collector-size').value);
   if (!result.ok) appendLog(result.message);
   else appendLog('Collector size saved for the next browser window. You can also drag its edges while it is open.');
 };
-$('hf-token').onclick = () => { $('token-input').value = ''; $('token-message').textContent = ''; $('token-dialog').showModal(); };
+$('hf-token').onclick = () => { $('settings-dialog').close(); $('token-input').value = ''; $('token-message').textContent = ''; $('token-dialog').showModal(); };
 $('token-cancel').onclick = () => $('token-dialog').close();
 $('token-save').onclick = async () => {
   const result = await window.gymApp.setToken($('token-input').value.trim());
@@ -116,8 +119,9 @@ $('stop').onclick = async () => {
   await window.gymApp.stop();
   appendLog('Stop requested. The collector will save this club, then stop.');
 };
-$('folder').onclick = () => window.gymApp.openDataFolder();
+$('folder').onclick = () => { $('settings-dialog').close(); window.gymApp.openDataFolder(); };
 $('import').onclick = async () => {
+  $('settings-dialog').close();
   const result = await window.gymApp.importCsv();
   if (!result.canceled) appendLog(result.message || (result.ok ? 'Imported CSV.' : 'Import failed.'));
 };

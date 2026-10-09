@@ -5,14 +5,47 @@ import os
 import tempfile
 import unittest
 import urllib.error
+from datetime import date, timedelta
 from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
-from review_app import analyze_full_batch, ask_hugging_face, chart_csv, chart_data, combine_ai_summaries, connect, coverage_data, delete_prompt_preset, enforce_english_answer, export_club_csv, hugging_face_chat, import_csv, prompt_presets, review_data, routed_model, save_prompt_preset, stats, translate_review
+from review_app import analyze_full_batch, ask_hugging_face, chart_csv, chart_data, combine_ai_summaries, connect, coverage_data, delete_prompt_preset, enforce_english_answer, export_club_csv, filters, hugging_face_chat, import_csv, period_comparison_data, prompt_presets, review_data, routed_model, save_prompt_preset, stats, translate_review
 
 
 class ReviewAppTests(unittest.TestCase):
+    def test_custom_date_stops_at_tomorrow(self):
+        tomorrow = date.today() + timedelta(days=1)
+        filters({"period": ["custom"], "start": [tomorrow.isoformat()], "end": [tomorrow.isoformat()]})
+        with self.assertRaisesRegex(ValueError, "no later than tomorrow"):
+            filters({"period": ["custom"], "end": [(tomorrow + timedelta(days=1)).isoformat()]})
+
+    def test_completed_period_comparison_retains_club_filters(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            club = "gym-vilnius-mokslininku-g-6a"
+            other = "gym-vilnius-gedimino-pr-9"
+            source = root / "reviews.csv"
+            source.write_text("club_id,review_id,rating,published_at,text,owner_reply_text\n"
+                              f"{club},a,1,2026-07-10,Broken machine,Sorry\n"
+                              f"{club},b,5,2026-08-10,Great,\n"
+                              f"{club},c,4,2026-09-10,Good,\n"
+                              f"{other},d,1,2026-09-11,Other,\n"
+                              f"{club},e,1,2026-10-01,Current incomplete month,\n", encoding="utf-8")
+            with closing(connect(root / "reviews.sqlite3")) as con:
+                import_csv(con, source)
+                params = {"club_id": [club], "period": ["last_30_days"]}
+                monthly = period_comparison_data(con, params, "month", today=date(2026, 10, 9))["rows"]
+                self.assertEqual([(r["period"], r["count"]) for r in monthly[-3:]],
+                                 [("2026-07", 1), ("2026-08", 1), ("2026-09", 1)])
+                self.assertEqual(monthly[-1]["average_rating"], 4)
+                self.assertEqual(monthly[-1]["low_pct"], 0)
+                quarterly = period_comparison_data(con, params, "quarter", today=date(2026, 10, 9))["rows"]
+                self.assertEqual((quarterly[-1]["period"], quarterly[-1]["count"]), ("2026 Q3", 3))
+                yearly = period_comparison_data(con, params, "year", today=date(2026, 10, 9))["rows"]
+                self.assertEqual(yearly[-1]["period"], "2025")
+                self.assertEqual(yearly[-1]["count"], 0)
+
     def test_chinese_analysis_is_rewritten_to_english(self):
         chinese = "设备维护不佳，空调和清洁问题多次出现。"
         with patch("review_app.hugging_face_chat", return_value="Equipment maintenance and cleanliness recur.") as chat:
@@ -39,6 +72,8 @@ class ReviewAppTests(unittest.TestCase):
                     self.assertIn("Write the entire answer in English", prompt["messages"][0]["content"])
                     self.assertIn("First issue", prompt["messages"][1]["content"])
                     self.assertIn("Second issue", prompt["messages"][1]["content"])
+                    self.assertNotIn('"review_id"', prompt["messages"][1]["content"])
+                    self.assertEqual({item["comment"] for item in first["evidence"]}, {"First issue", "Second issue"})
                     combined = combine_ai_summaries("Find issues", "openai/gpt-oss-20b:cheapest", "en", ["Both issues"])
                     self.assertEqual(combined["answer"], "Both issues")
                 with patch.dict(os.environ, {"HF_TOKEN": "hf_fake"}):

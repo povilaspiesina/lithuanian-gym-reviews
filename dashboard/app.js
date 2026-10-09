@@ -10,15 +10,16 @@ let sortKey = 'count', sortDescending = true;
 let savedPrompts = [];
 let activeView = 'overview';
 let cancelAnalysis = false;
+let comparisonRequest = 0;
 const aiPresets = {
-  issues: {mode:'issues', prompt:'Group recurring problems in these reviews. For each theme, give a concise explanation and cite review IDs and author names when available. Separate common patterns from isolated reports, and do not infer prevalence beyond the selected reviews.'},
-  actions: {mode:'issues', prompt:'Recommend the three most practical improvements the gyms could make based on these negative reviews. For each, describe the customer problem, a concrete action, and supporting review IDs with author names when available. Say when evidence is sparse.'},
-  billing: {mode:'issues', prompt:'Examine membership terms, cancellation, charges, and billing complaints in the selected reviews. Identify distinct issues and cite review IDs and author names when available. If none of the selected reviews contains a relevant complaint, say so. Do not make legal conclusions.'},
-  strengths: {mode:'summary', prompt:'What do members value most in these gyms? Group positive themes and cite representative review IDs and author names when available. Distinguish repeated praise from one-off comments.'},
-  replies: {mode:'summary', prompt:'Assess the owner replies present in the selected reviews. Which concerns receive a specific response, and which replies are generic or leave the concern unresolved? Cite review IDs and author names when available. Do not judge reviews without a reply as if they were answered.'},
-  recent: {mode:'summary', prompt:'Summarize what reviewers say in the selected date period. Highlight positive and negative themes with review IDs and author names when available. Note that Google Maps dates may be estimated and do not claim a trend unless the selected reviews support it.'},
-  compare: {mode:'summary', prompt:'Compare the chains or clubs represented in the selected reviews. Describe differences supported by the reviews, cite review IDs and author names when available, and state when a club has too few selected comments for a useful comparison.'},
-  brief: {mode:'summary', prompt:'Write a short management brief with strengths, recurring problems, owner response gaps, and two practical next actions. Cite review IDs and author names when available. Keep conclusions limited to the selected reviews.'},
+  issues: {mode:'issues', prompt:'Identify up to five distinct recurring problems. For each, explain the customer experience in plain English and cite one or two specific comments using their [R#] references. Merge overlapping themes. Distinguish repeated reports from isolated ones and make no claims beyond these comments.'},
+  actions: {mode:'issues', prompt:'Recommend up to three practical gym improvements supported by these comments. For each, state the customer problem, a concrete action, and a specific comment with its [R#] reference. Do not repeat the same issue under different headings. Say when evidence is sparse.'},
+  billing: {mode:'issues', prompt:'Examine only comments about membership terms, cancellation, charges, and billing. Group distinct issues and support each with a relevant comment and [R#] reference. Exclude unrelated complaints. If no comment is relevant, say so. Make no legal conclusions.'},
+  strengths: {mode:'summary', prompt:'Identify the main positive themes without duplication. Support each with a relevant comment and [R#] reference. Distinguish repeated praise from one-off comments.'},
+  replies: {mode:'summary', prompt:'Assess only comments with owner replies. Separate specific responses from generic or unresolved ones. For each finding, cite a relevant comment and its owner reply using its [R#] reference. Do not judge comments without replies as answered.'},
+  recent: {mode:'summary', prompt:'Summarize distinct positive and negative themes in the selected date period. Support each with a relevant comment and [R#] reference. Google Maps dates may be estimated; do not claim a trend from this sample alone.'},
+  compare: {mode:'summary', prompt:'Compare the represented chains or clubs only where comments support a difference. Give specific comments with [R#] references for each comparison. Avoid generalizing from sparse comments.'},
+  brief: {mode:'summary', prompt:'Write a concise management brief: strengths, recurring problems, owner response gaps, and up to two next actions. Use specific comments and [R#] references for substantive claims. Merge overlapping points and stay within these comments.'},
   question: {mode:'question', prompt:''},
 };
 const presetDetails = {
@@ -99,8 +100,9 @@ function filterFields() {
   const chains = [...new Set(clubs.map(c => c.chain))].sort();
   const cities = [...new Set(clubs.map(c => c.locality))].sort();
   return `
-    <label>Period<select name="period"><option value="all">All time</option><option value="last_30_days">Last 30 days</option><option value="previous_month">Previous month</option><option value="custom">Custom dates</option></select></label>
-    <label class="custom-date" hidden>From<input type="date" name="start" disabled></label><label class="custom-date" hidden>To<input type="date" name="end" disabled></label>
+    <div class="filter-time"><label>Period<select name="period"><option value="all">All time</option><option value="last_30_days">Last 30 days</option><option value="previous_month">Previous month</option><option value="custom">Custom dates</option></select></label>
+      <div class="date-slot"><div class="date-fields" aria-hidden="true"><label>From<input type="date" name="start" disabled></label><label>To<input type="date" name="end" disabled></label></div><p class="date-hint">Choose Custom dates to set a range.</p></div></div>
+    <div class="filter-main">
     <label>Chain<select name="chain">${choices(chains, 'chains')}</select></label>
     <label>City<select name="city">${choices(cities, 'cities')}</select></label>
     <label>Club<select name="club_id"><option value="">All clubs</option>${clubs.map(c => `<option value="${esc(c.id)}">${esc(c.chain)} · ${esc(c.club_name)} · ${esc(c.locality)}</option>`).join('')}</select></label>
@@ -108,18 +110,26 @@ function filterFields() {
     <label>Written comment<select name="comment"><option value="all">All reviews</option><option value="written">With comment</option><option value="rating_only">Rating only</option></select></label>
     <label>Owner reply<select name="reply"><option value="all">All reviews</option><option value="replied">With reply</option><option value="unreplied">Without reply</option></select></label>
     <label>Search text<input name="q" type="search" placeholder="e.g. cleanliness"></label>
-    <button type="submit">Apply filters</button>`;
+    <button type="submit">Apply filters</button></div>`;
+}
+
+function tomorrowLocal() {
+  const day = new Date();
+  day.setDate(day.getDate() + 1);
+  return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
 }
 
 for (const id of ['overview-filters', 'review-filters']) {
   const form = document.getElementById(id);
   form.innerHTML = filterFields();
+  form.elements.start.max = tomorrowLocal();
+  form.elements.end.max = tomorrowLocal();
   const updateDateFields = () => {
     const active = form.elements.period.value === 'custom';
     form.elements.start.disabled = !active;
     form.elements.end.disabled = !active;
-    form.elements.start.closest('label').hidden = !active;
-    form.elements.end.closest('label').hidden = !active;
+    form.querySelector('.date-slot').classList.toggle('date-active', active);
+    form.querySelector('.date-fields').setAttribute('aria-hidden', String(!active));
   };
   form.updateDateFields = updateDateFields;
   form.addEventListener('change', () => { updateDateFields(); syncFilters(form); });
@@ -127,6 +137,7 @@ for (const id of ['overview-filters', 'review-filters']) {
   updateDateFields();
   form.onsubmit = event => {
     event.preventDefault();
+    if (!form.reportValidity()) return;
     syncFilters(form);
     if (id === 'overview-filters') loadOverview();
     else { reviewOffset = 0; loadReviews(); }
@@ -293,6 +304,49 @@ function renderOverview(data) {
   for (const link of document.querySelectorAll('[data-export]')) link.href = `/export-chart.csv?kind=${link.dataset.export}&${suffix}`;
 }
 
+function comparisonParams() {
+  const params = query($('#overview-filters'));
+  for (const name of ['period', 'start', 'end']) params.delete(name);
+  params.set('grain', $('#comparison-grain').value);
+  return params;
+}
+function difference(current, previous, suffix, betterDirection) {
+  if (current == null || previous == null) return '<span class="muted">—</span>';
+  const delta = current - previous;
+  const good = delta * betterDirection > 0.005, bad = delta * betterDirection < -0.005;
+  const symbol = delta > 0.005 ? '↑' : delta < -0.005 ? '↓' : '→';
+  return `<span class="period-delta ${good ? 'improved' : bad ? 'declined' : ''}">${symbol} ${Math.abs(delta).toFixed(suffix === '★' ? 2 : suffix === 'reviews' ? 0 : 1)} ${suffix}</span>`;
+}
+function renderPeriodComparison(data) {
+  const rows = data.rows;
+  $('#period-rows').innerHTML = rows.map((row, index) => {
+    const previous = rows[index - 1];
+    return `<tr><td>${esc(row.period)}</td><td>${fmt(row.count)}</td><td>${previous?.count ? difference(row.count, previous.count, 'reviews', 0) : '—'}</td><td>${row.average_rating == null ? '—' : row.average_rating.toFixed(2)}</td><td>${previous?.count ? difference(row.average_rating, previous.average_rating, '★', 1) : '—'}</td><td>${row.low_pct == null ? '—' : row.low_pct.toFixed(1) + '%'}</td><td>${previous?.count ? difference(row.low_pct, previous.low_pct, 'pp', -1) : '—'}</td><td>${row.reply_pct == null ? '—' : row.reply_pct.toFixed(1) + '%'}</td><td>${previous?.count ? difference(row.reply_pct, previous.reply_pct, 'pp', 1) : '—'}</td></tr>`;
+  }).join('');
+  const latest = rows.at(-1), previous = rows.at(-2);
+  let summary = 'No comparable reviews in the latest completed periods.';
+  if (latest?.count && previous?.count) {
+    const rating = latest.average_rating - previous.average_rating;
+    const low = latest.low_pct - previous.low_pct;
+    const direction = rating > 0.05 && low < -0.5 ? 'Ratings and low-star share both improved' :
+      rating < -0.05 && low > 0.5 ? 'Ratings and low-star share both worsened' : 'The signals are mixed or nearly unchanged';
+    summary = `<strong>${direction}</strong> from ${esc(previous.period)} to ${esc(latest.period)}. Average ${difference(latest.average_rating, previous.average_rating, '★', 1)}; 1–2 ★ share ${difference(latest.low_pct, previous.low_pct, 'pp', -1)}. ${fmt(previous.count)} → ${fmt(latest.count)} reviews.${Math.min(latest.count, previous.count) < 20 ? ' Small review counts make this comparison less reliable.' : ''}`;
+  }
+  $('#period-summary').innerHTML = summary;
+}
+async function loadPeriodComparison() {
+  const request = ++comparisonRequest;
+  const params = comparisonParams();
+  $('#period-export').href = '/export-periods.csv?' + params;
+  $('#period-summary').textContent = 'Loading period comparison…';
+  try {
+    const response = await fetch('/api/periods?' + params);
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Could not load period comparison');
+    if (request === comparisonRequest) renderPeriodComparison(result);
+  } catch (error) { if (request === comparisonRequest) $('#period-summary').textContent = error.message; }
+}
+
 function sortedClubRows() {
   const rows = [...(overviewData?.charts.clubs || [])];
   rows.sort((a,b) => {
@@ -333,7 +387,8 @@ async function fetchData(form, offset = 0) {
   return result;
 }
 async function loadOverview() {
-  try { overviewData = await fetchData($('#overview-filters')); renderOverview(overviewData); }
+  if (!$('#overview-filters').reportValidity()) return;
+  try { overviewData = await fetchData($('#overview-filters')); renderOverview(overviewData); loadPeriodComparison(); }
   catch (error) { alert(error.message); }
 }
 
@@ -390,6 +445,7 @@ async function translateCard(button) {
   finally { button.disabled = false; }
 }
 async function loadReviews() {
+  if (!$('#review-filters').reportValidity()) return;
   try { reviewData = await fetchData($('#review-filters'), reviewOffset); renderReviews(reviewData); }
   catch (error) { alert(error.message); }
 }
@@ -401,9 +457,42 @@ async function postAI(path, body) {
   if (!response.ok) throw new Error(result.error || 'Analysis failed');
   return result;
 }
+function renderAIEvidence(result, evidence) {
+  const panel = $('#ai-evidence');
+  const found = new Map(evidence.filter(row => /^R\d+$/.test(row.ref)).map(row => [row.ref, row]));
+  const cited = [...new Set((result.textContent.match(/\[R\d+\]/gi) || []).map(ref => ref.slice(1, -1).toUpperCase()))].filter(ref => found.has(ref));
+  const selected = cited.length ? cited : [...found.keys()].slice(0, 4);
+  panel.hidden = !selected.length;
+  if (!selected.length) return;
+  panel.open = Boolean(cited.length);
+  $('#ai-evidence-title').textContent = `Comments behind this answer (${selected.length})`;
+  $('#ai-evidence-note').textContent = cited.length ? 'Select a reference in the answer to jump to its full comment.' : 'The model did not cite a comment. Here are examples from the analyzed comments; verify its claims against the review list.';
+  $('#ai-evidence-list').innerHTML = selected.map(ref => {
+    const row = found.get(ref);
+    return `<article class="evidence-item" id="ai-evidence-${esc(ref)}"><h4>${esc(ref)} · ${esc(row.author || 'Anonymous')} · ${esc(row.club || '')}</h4><p class="hint">${esc(row.chain || '')} · ${esc(row.rating || '')} ★ · ${esc(row.date || '')}</p><p>${esc(row.comment || '')}</p>${row.owner_reply ? `<blockquote><strong>Owner reply</strong><p>${esc(row.owner_reply)}</p></blockquote>` : ''}${/^https:\/\//.test(row.review_url || '') ? `<a href="${esc(row.review_url)}" target="_blank" rel="noopener noreferrer">Open source</a>` : ''}</article>`;
+  }).join('');
+  const walker = document.createTreeWalker(result, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) if (/\[R\d+\]/i.test(walker.currentNode.textContent)) nodes.push(walker.currentNode);
+  for (const node of nodes) {
+    const pieces = node.textContent.split(/(\[R\d+\])/gi);
+    const fragment = document.createDocumentFragment();
+    for (const piece of pieces) {
+      const ref = /^\[(R\d+)\]$/i.exec(piece)?.[1]?.toUpperCase();
+      if (ref && found.has(ref)) {
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = 'ai-cite'; button.textContent = `[${ref}]`;
+        button.onclick = () => { panel.open = true; document.getElementById(`ai-evidence-${ref}`)?.scrollIntoView({behavior:'smooth', block:'center'}); };
+        fragment.append(button);
+      } else fragment.append(document.createTextNode(piece));
+    }
+    node.replaceWith(fragment);
+  }
+}
 async function askAI() {
+  if (!$('#review-filters').reportValidity()) return;
   const button = $('#ai-run'), status = $('#ai-status'), result = $('#ai-result');
-  button.disabled = true; status.textContent = $('#ai-scope').value === 'all' ? 'Preparing full analysis…' : 'Analyzing a sample of matching written reviews…'; result.hidden = true;
+  button.disabled = true; status.textContent = $('#ai-scope').value === 'all' ? 'Preparing full analysis…' : 'Analyzing a sample of matching written reviews…'; result.hidden = true; $('#ai-evidence').hidden = true;
   cancelAnalysis = false;
   $('#ai-cancel').disabled = false;
   $('#ai-cancel').hidden = $('#ai-scope').value !== 'all';
@@ -412,6 +501,7 @@ async function askAI() {
     const request = {mode, model:aiModel(), question:$('#ai-question').value.trim(), language:$('#ai-language').value};
     if (!request.model) throw new Error('Choose an analysis model.');
     let body;
+    const evidence = [];
     if ($('#ai-scope').value === 'all') {
       const summaries = [];
       let offset = 0, eligible = null;
@@ -421,6 +511,7 @@ async function askAI() {
           {...request, offset});
         if (!batch.processed) throw new Error('Full analysis stopped because a batch contained no reviews.');
         summaries.push(batch.answer);
+        evidence.push(...(batch.evidence || []));
         offset += batch.processed;
         eligible = batch.eligible;
         status.textContent = `Read ${fmt(offset)} of ${fmt(eligible)} matching comments · ${summaries.length} AI batches. Synthesizing follows.`;
@@ -441,6 +532,7 @@ async function askAI() {
       status.textContent = `Full analysis: ${fmt(offset)} of ${fmt(eligible)} matching comments processed using ${body.model}.`;
     } else {
       body = await postAI('/api/ai?' + query($('#review-filters')), request);
+      evidence.push(...(body.evidence || []));
       status.textContent = `Balanced sample: ${fmt(body.sampled)} of ${fmt(body.eligible)} eligible comments analyzed using ${body.model}. ${body.eligible > body.sampled ? 'Choose “All matching comments” to cover the rest.' : ''}`;
     }
     result.innerHTML = DOMPurify.sanitize(marked.parse(body.answer || '', {breaks:true}),
@@ -448,6 +540,7 @@ async function askAI() {
     for (const link of result.querySelectorAll('a')) {
       link.target = '_blank'; link.rel = 'noopener noreferrer';
     }
+    renderAIEvidence(result, evidence);
     result.hidden = false;
   } catch (error) { status.textContent = error.message; }
   finally { button.disabled = false; $('#ai-cancel').hidden = true; }
@@ -467,6 +560,7 @@ document.querySelectorAll('[data-view]').forEach(button => button.onclick = () =
   if (view === 'overview' && overviewData) loadOverview();
 });
 $('#collection-filter').onchange = () => { if (collectionData) renderCollection(collectionData); };
+$('#comparison-grain').onchange = loadPeriodComparison;
 $('#retry-problem-clubs').onclick = () => requestCollection('attention');
 $('#collection-rows').onclick = event => {
   const button = event.target.closest('[data-retry-club]');

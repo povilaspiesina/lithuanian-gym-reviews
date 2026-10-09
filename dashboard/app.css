@@ -40,3 +40,24 @@
 #ai-scope-note{border-left:3px solid #14a496;padding-left:10px;line-height:1.5}
 #ai-cancel{background:#fff5ed;color:#8b4c1b;border:1px solid #efd2ba;border-radius:7px;padding:9px 12px}
 #ai-cancel:disabled{opacity:.6;cursor:default}
+
+/* Stable filter layout: the date slot keeps its space when the period changes. */
+.filters{display:block;padding:18px}
+.filter-time{display:grid;grid-template-columns:minmax(170px,220px) minmax(310px,1fr);gap:12px;align-items:end;margin-bottom:12px}
+.filter-time>label,.filter-main>label{display:grid;gap:5px}
+.date-slot{position:relative;min-height:66px}
+.date-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.date-slot:not(.date-active) .date-fields{visibility:hidden}
+.date-hint{position:absolute;top:27px;left:0;margin:0;color:#63777b;font-size:.82rem;height:38px;display:flex;align-items:center}
+.date-slot.date-active .date-hint{visibility:hidden}
+.filter-main{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;align-items:end}
+.filter-main button[type=submit]{min-height:39px}
+.period-card{margin:16px 0 12px}.period-card .card-head{align-items:start}
+.period-card .card-head .hint{margin:5px 0 12px}.period-controls{display:flex;align-items:end;gap:9px;white-space:nowrap}
+.period-controls label{display:grid;gap:4px;font-size:.77rem;font-weight:700}.period-controls select{border:1px solid #b6c6c7;border-radius:7px;padding:7px;background:white}
+.period-summary{background:#eef8f6;border-left:3px solid #14a496;border-radius:5px;padding:10px 12px;margin:8px 0 12px;line-height:1.5;font-size:.88rem}
+.period-table td,.period-table th{text-align:right}.period-table td:first-child,.period-table th:first-child{text-align:left}.period-table tbody tr:last-child{background:#f3faf8;font-weight:700}
+.period-delta{font-size:.83rem;white-space:nowrap}.period-delta.improved{color:#087a56}.period-delta.declined{color:#a0442e}
+@media(max-width:900px){.filter-main{grid-template-columns:repeat(2,minmax(0,1fr))}.period-card .card-head{flex-wrap:wrap}}
+@media(max-width:600px){.filter-time{grid-template-columns:1fr}.filter-main{grid-template-columns:1fr}.period-controls{width:100%;justify-content:space-between}.period-table{min-width:670px}}
+.ai-evidence{margin-top:18px;border-top:1px solid #dbe6e5;padding-top:14px}.ai-evidence summary{cursor:pointer;color:#126c66;font-weight:700}.ai-evidence #ai-evidence-list{display:grid;gap:12px;margin-top:12px}.evidence-item{background:#f6faf9;border:1px solid #dce8e6;border-radius:8px;padding:12px 15px;scroll-margin-top:20px}.evidence-item h4{margin:0 0 3px}.evidence-item p{white-space:pre-wrap;line-height:1.5}.evidence-item blockquote{border-left:3px solid #14a496;margin:10px 0;padding:4px 12px}.ai-cite{display:inline;border:0;background:#e3f3f0;color:#126c66;font:inherit;font-weight:700;padding:0 4px;cursor:pointer}.ai-cite:hover{background:#c8eae5}
