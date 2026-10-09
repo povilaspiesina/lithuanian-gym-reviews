@@ -2,8 +2,8 @@ const { app, BrowserWindow, dialog, ipcMain, shell, safeStorage } = require('ele
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const zlib = require('zlib');
 const updater = require('./updater');
+const { installStarterArchive } = require('./archive');
 const { autoUpdater } = require('electron-updater');
 
 let mainWindow;
@@ -40,18 +40,11 @@ function dataDir() {
 }
 
 function ensureStarterArchive() {
-  const destination = dataDir();
-  const database = path.join(destination, 'reviews.sqlite3');
   const seed = resource(path.join('seed', 'reviews.sqlite3.gz'));
-  if (fs.existsSync(database) || !fs.existsSync(seed)) return;
-  const temporary = database + '.tmp';
   try {
-    fs.writeFileSync(temporary, zlib.gunzipSync(fs.readFileSync(seed)));
-    fs.renameSync(temporary, database);
     const report = resource(path.join('seed', 'scrape-report.json'));
-    if (fs.existsSync(report)) fs.copyFileSync(report, path.join(destination, 'scrape-report.json'));
+    installStarterArchive(dataDir(), seed, report);
   } catch (error) {
-    fs.rmSync(temporary, { force: true });
     send('app-error', `Could not install starter archive: ${error.message}`);
   }
 }

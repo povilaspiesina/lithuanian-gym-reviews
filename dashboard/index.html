@@ -15,6 +15,7 @@
     <div><h1>Lithuanian gym reviews</h1><p>Gym+ · Lemon Gym · SportGates</p></div>
     <nav aria-label="Dashboard sections">
       <button type="button" class="nav-active" data-view="overview">Overview</button>
+      <button type="button" data-view="trends">Trends</button>
       <button type="button" data-view="reviews">Reviews &amp; AI</button>
       <button type="button" data-view="collection">Collection</button>
     </nav>
@@ -32,11 +33,6 @@
         <div class="card metric">Replies to 1–2 ★<b id="low-reply">—</b><small>of 1–2 star reviews</small></div>
       </div>
       <p class="quality-note" id="overview-quality"></p>
-      <section class="card period-card"><div class="card-head"><div><h3>Change over time</h3><p class="hint">Compare completed calendar periods for the selected gyms and review filters. The date range above does not limit this comparison.</p></div><div class="period-controls"><label>Compare by <select id="comparison-grain"><option value="month">Month</option><option value="quarter">Quarter</option><option value="year">Year</option></select></label><a id="period-export" class="export" href="#">Export CSV</a></div></div>
-        <div id="period-summary" class="period-summary" role="status"></div>
-        <div class="table-wrap"><table class="period-table"><thead><tr><th>Period</th><th>Reviews</th><th>Change</th><th>Average ★</th><th>Change</th><th>1–2 ★</th><th>Change</th><th>Owner replies</th><th>Change</th></tr></thead><tbody id="period-rows"></tbody></table></div>
-        <p class="hint">A rating increase or fewer low ratings describes the reviews received, not a proven change in club quality. Google Maps dates can be estimated.</p>
-      </section>
       <div class="charts">
         <section class="card chart"><div class="card-head"><h3>Rating distribution</h3><a data-export="distribution" class="export" href="#">Export CSV</a></div><p class="hint">Click a rating to filter the overview.</p><div id="distribution"></div></section>
         <section class="card chart"><div class="card-head"><h3>Review volume over time</h3><a data-export="volume" class="export" href="#">Export CSV</a></div><p class="hint" id="trend-note"></p><div id="trend"></div></section>
@@ -46,6 +42,23 @@
       <section class="card club-card"><div class="card-head"><h3>Compare clubs</h3><a data-export="clubs" class="export" href="#">Export CSV</a></div><p class="hint">Click a heading to sort. Review counts show the sample size behind each average.</p>
         <div class="table-wrap"><table><thead><tr><th><button type="button" data-sort="name">Club <span class="sort-arrow"></span></button></th><th><button type="button" data-sort="count">Reviews <span class="sort-arrow"></span></button></th><th><button type="button" data-sort="average_rating">Avg ★ <span class="sort-arrow"></span></button></th><th><button type="button" data-sort="written_pct">With comment <span class="sort-arrow"></span></button></th><th><button type="button" data-sort="low_pct">1–2 ★ <span class="sort-arrow"></span></button></th></tr></thead><tbody id="clubs-table"></tbody></table></div>
       </section>
+    </section>
+    <section id="trends-view" class="view" hidden>
+      <div class="section-head"><div><h2>Trends</h2><p>Compare completed months, quarters, or years. Select a period to inspect its change from the one before it.</p></div><span class="updated" id="trends-updated"></span></div>
+      <form id="trends-filters" class="filters"></form>
+      <div class="trends-toolbar"><label>Compare by <select id="comparison-grain"><option value="month">Month</option><option value="quarter">Quarter</option><option value="year">Year</option></select></label><a id="period-export" class="export" href="#">Export period data CSV</a></div>
+      <div class="trend-insight" id="period-summary" role="status">Loading trends…</div>
+      <div class="trend-kpis" id="trend-kpis"></div>
+      <div class="charts trend-charts">
+        <section class="card chart"><div class="card-head"><h3>Average rating</h3><span class="hint">Higher is better</span></div><div id="compare-rating"></div></section>
+        <section class="card chart"><div class="card-head"><h3>1–2 star share</h3><span class="hint">Lower is better</span></div><div id="compare-low"></div></section>
+        <section class="card chart"><div class="card-head"><h3>Review volume</h3><span class="hint">Number of reviews</span></div><div id="compare-volume"></div></section>
+        <section class="card chart"><div class="card-head"><h3>Owner reply rate</h3><span class="hint">Share of reviews with a reply</span></div><div id="compare-replies"></div></section>
+      </div>
+      <section class="card trend-table-card"><div class="card-head"><h3>Period details</h3><p class="hint">Click a row or chart point to compare that period with the preceding one.</p></div>
+        <div class="table-wrap"><table class="period-table"><thead><tr><th>Period</th><th>Reviews</th><th>Change</th><th>Average ★</th><th>Change</th><th>1–2 ★</th><th>Change</th><th>Owner replies</th><th>Change</th></tr></thead><tbody id="period-rows"></tbody></table></div>
+      </section>
+      <p class="quality-note">A rating increase or fewer low ratings describes reviews received, not a proven change in gym quality. Google Maps dates may be estimated. Small review counts can make changes look dramatic.</p>
     </section>
     <section id="collection-view" class="view" hidden>
       <div class="section-head"><div><h2>Collection</h2><p>See what was saved, what Maps displayed, and where a scan needs attention.</p></div><span class="updated" id="collection-updated"></span></div>

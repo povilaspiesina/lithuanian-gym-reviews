@@ -2,6 +2,17 @@
 
 Add a `## vX.Y.Z` section before creating each version tag. The Windows release workflow publishes that section as the GitHub release description.
 
+## v1.9.6
+
+### Added
+- A dedicated Trends page compares completed months, quarters, and years with interactive charts for rating, low-star share, review volume, and owner reply rate. Change cards and a selectable period table show the difference from the preceding period.
+- Overview numbers expand and show their exact scope on hover or keyboard focus.
+- A regression test verifies that installing a newer bundled starter archive does not replace an existing review database or its saved AI prompts.
+
+### Changed
+- Choosing a club automatically selects its chain and city. Changing either location filter clears a club that no longer matches.
+- Period comparisons have moved out of Overview. Filters stay in sync across Overview, Trends, and Reviews & AI.
+
 ## v1.9.5
 
 ### Added
