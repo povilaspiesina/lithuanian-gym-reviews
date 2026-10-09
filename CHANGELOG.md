@@ -2,6 +2,17 @@
 
 Add a `## vX.Y.Z` section before creating each version tag. The Windows release workflow publishes that section as the GitHub release description.
 
+## v1.9.7
+
+### Added
+- Chain checkboxes show Gym+, Lemon Gym, and SportGates as separate comparison cards and chart lines by default. Individual clubs can also be ticked, searched, and compared on the same charts.
+- An optional combined series counts each selected review once and calculates a review-weighted average rating. All chains and Clear selection shortcuts make large selections easier to change.
+- Overview and Trends exports include the selected comparison series in CSV files.
+
+### Changed
+- Overview and Trends use the full available window width. Cards and charts rearrange for narrower windows, while the period table compares selected gyms side by side.
+- Gym selections stay in sync across Overview, Trends, and Reviews & AI. Changing a checkbox refreshes the active view.
+
 ## v1.9.6
 
 ### Added

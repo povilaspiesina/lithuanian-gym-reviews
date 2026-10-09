@@ -10,10 +10,33 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
-from review_app import analyze_full_batch, ask_hugging_face, chart_csv, chart_data, combine_ai_summaries, connect, coverage_data, delete_prompt_preset, enforce_english_answer, export_club_csv, filters, hugging_face_chat, import_csv, period_comparison_data, prompt_presets, review_data, routed_model, save_prompt_preset, stats, translate_review
+from review_app import analyze_full_batch, ask_hugging_face, chart_csv, chart_data, combine_ai_summaries, comparison_series, connect, coverage_data, delete_prompt_preset, enforce_english_answer, export_club_csv, filters, hugging_face_chat, import_csv, period_comparison_data, prompt_presets, review_data, routed_model, save_prompt_preset, stats, translate_review
 
 
 class ReviewAppTests(unittest.TestCase):
+    def test_selected_chains_clubs_and_combined_series(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            first = "gym-vilnius-mokslininku-g-6a"
+            second = "gym-vilnius-gedimino-pr-9"
+            source = root / "reviews.csv"
+            source.write_text("club_id,review_id,rating,published_at,text\n"
+                              f"{first},a,1,2026-08-10,Issue\n"
+                              f"{first},b,5,2026-08-11,Great\n"
+                              f"{second},c,4,2026-08-12,Good\n", encoding="utf-8")
+            with closing(connect(root / "reviews.sqlite3")) as con:
+                import_csv(con, source)
+                scopes = {"scope": ["chain:Gym+", f"club:{first}"], "combined": ["1"]}
+                overview = comparison_series(con, scopes, "overview")
+                self.assertEqual([item["stats"]["review_count"] for item in overview["series"]], [3, 2, 3])
+                self.assertEqual(overview["series"][2]["label"], "Combined selection")
+                self.assertEqual([item["stats"]["review_count"] for item in
+                                  comparison_series(con, {"scope": [f"club:{first}", f"club:{second}"]}, "overview")["series"]], [2, 1])
+                self.assertEqual(comparison_series(con, {"scope": ["none"]}, "overview")["series"], [])
+                periods = comparison_series(con, {**scopes, "grain": ["month"]}, "periods")
+                self.assertEqual([next(row["count"] for row in item["rows"] if row["period"] == "2026-08")
+                                  for item in periods["series"]], [3, 2, 3])
+
     def test_custom_date_stops_at_tomorrow(self):
         tomorrow = date.today() + timedelta(days=1)
         filters({"period": ["custom"], "start": [tomorrow.isoformat()], "end": [tomorrow.isoformat()]})

@@ -266,10 +266,28 @@ def filters(params):
         raise ValueError("invalid comment filter")
     if reply not in {"all", "replied", "unreplied"}:
         raise ValueError("invalid reply filter")
+    scopes = params.get("scope")
+    scoped_ids = None
+    if scopes is not None:
+        scoped_ids = set()
+        for scope in scopes:
+            if scope == "none":
+                continue
+            kind, separator, value = scope.partition(":")
+            if not separator or kind not in {"chain", "club"}:
+                raise ValueError("invalid comparison selection")
+            if kind == "chain":
+                matched = {c["id"] for c in known_clubs if c["chain"] == value}
+            else:
+                matched = {c["id"] for c in known_clubs if c["id"] == value}
+            if not matched:
+                raise ValueError("unknown comparison selection")
+            scoped_ids.update(matched)
     selected = [c["id"] for c in known_clubs if
                 (not chain or c["chain"] == chain) and
                 (not city or c["locality"] == city) and
-                (not club_id or c["id"] == club_id)]
+                (not club_id or c["id"] == club_id) and
+                (scoped_ids is None or c["id"] in scoped_ids)]
     clauses, values = [], []
     if selected and len(selected) < len(known_clubs):
         clauses.append("club_id IN (" + ",".join("?" for _ in selected) + ")")
@@ -427,6 +445,64 @@ def period_comparison_data(con, params, grain, today=None):
                      "reply_pct": round(100 * item["reply_count"] / count, 1) if count else None,
                      "written_pct": round(100 * item["written_count"] / count, 1) if count else None})
     return {"grain": grain, "rows": rows, "complete_periods_only": True}
+
+
+def comparison_series(con, params, mode):
+    """Separate selected entities; the optional combined row is a union of club IDs."""
+    if mode not in {"overview", "periods"}:
+        raise ValueError("invalid comparison mode")
+    requested = list(dict.fromkeys(params.get("scope", [])))
+    if not requested or requested == ["none"]:
+        result = {"series": [], "grain": params.get("grain", ["month"])[0]}
+        if mode == "overview":
+            result.update({"clubs": [], "coverage": coverage_data(con)})
+        return result
+    if len(requested) > 80:
+        raise ValueError("too many comparison selections")
+    known = {club["id"]: club for club in clubs()}
+    labels = {}
+    for scope in requested:
+        kind, separator, value = scope.partition(":")
+        if not separator or kind not in {"chain", "club"}:
+            raise ValueError("invalid comparison selection")
+        if kind == "chain" and value in {club["chain"] for club in known.values()}:
+            labels[scope] = value
+        elif kind == "club" and value in known:
+            club = known[value]
+            labels[scope] = f'{club["chain"]} · {club["club_name"]} · {club["locality"]}'
+        else:
+            raise ValueError("unknown comparison selection")
+    combined = params.get("combined", ["0"])[0] == "1"
+    common = {key: value for key, value in params.items() if key not in {"scope", "combined", "mode", "grain"}}
+    scopes = [(scope, labels[scope], [scope]) for scope in requested]
+    if combined and len(requested) > 1:
+        scopes.append(("combined", "Combined selection", requested))
+    if mode == "periods":
+        grain = params.get("grain", ["month"])[0]
+        series = []
+        for key, label, members in scopes:
+            scoped = {**common, "scope": members}
+            series.append({"key": key, "label": label, "rows": period_comparison_data(con, scoped, grain)["rows"]})
+        return {"grain": grain, "series": series}
+    all_params = {**common, "scope": requested}
+    where, values = filters(all_params)
+    first, last = con.execute("SELECT MIN(published_at), MAX(published_at) FROM reviews" + where, values).fetchone()
+    if first:
+        span = (date.fromisoformat(last) - date.fromisoformat(first)).days
+        grain, length = ("day", 10) if span <= 62 else (("month", 7) if span <= 1096 else ("year", 4))
+    else:
+        grain, length = "month", 7
+    series = []
+    for key, label, members in scopes:
+        scoped = {**common, "scope": members}
+        item_where, item_values = filters(scoped)
+        trend = [dict(row) for row in con.execute(
+            f"SELECT SUBSTR(published_at,1,{length}) AS period, COUNT(*) AS count, "
+            "ROUND(AVG(rating),2) AS average_rating FROM reviews" + item_where +
+            " GROUP BY period ORDER BY period", item_values)]
+        series.append({"key": key, "label": label, "stats": stats(con, scoped), "trend": trend})
+    return {"grain": grain, "series": series, "clubs": chart_data(con, all_params)["clubs"],
+            "coverage": coverage_data(con)}
 
 
 def coverage_data(con):
@@ -788,6 +864,40 @@ def make_handler(db_path):
                         payload = {"review_count": con.execute("SELECT COUNT(*) FROM reviews").fetchone()[0],
                                    "coverage": coverage_data(con)}
                     self.send_bytes(json.dumps(payload, ensure_ascii=False).encode(), "application/json; charset=utf-8")
+                elif parsed.path in {"/api/series", "/export-series.csv"}:
+                    mode = params.get("mode", ["overview"])[0]
+                    with closing(connect(db_path)) as con:
+                        payload = comparison_series(con, params, mode)
+                    if parsed.path == "/api/series":
+                        self.send_bytes(json.dumps(payload, ensure_ascii=False).encode(), "application/json; charset=utf-8")
+                    else:
+                        output = io.StringIO()
+                        writer = csv.writer(output)
+                        kind = params.get("kind", ["periods" if mode == "periods" else "volume"])[0]
+                        if mode == "periods":
+                            writer.writerow(["selection", "period", "reviews", "average_rating", "one_two_star_pct", "owner_reply_pct", "written_comment_pct"])
+                            for item in payload["series"]:
+                                writer.writerows((item["label"], row["period"], row["count"], row["average_rating"],
+                                                  row["low_pct"], row["reply_pct"], row["written_pct"]) for row in item["rows"])
+                        elif kind in {"volume", "rating_trend"}:
+                            writer.writerow(["selection", "period", "reviews", "average_rating"])
+                            for item in payload["series"]:
+                                writer.writerows((item["label"], row["period"], row["count"], row["average_rating"]) for row in item["trend"])
+                        elif kind == "distribution":
+                            writer.writerow(["selection", "stars", "reviews"])
+                            for item in payload["series"]:
+                                writer.writerows((item["label"], star, item["stats"]["ratings"][str(star)]) for star in range(1, 6))
+                        elif kind == "selected":
+                            writer.writerow(["selection", "reviews", "average_rating", "written_comments", "one_two_star_reviews", "owner_replies", "replies_to_one_two_star"])
+                            for item in payload["series"]:
+                                stat = item["stats"]
+                                writer.writerow((item["label"], stat["review_count"], stat["average_rating"],
+                                                 stat["written_count"], stat["low_rating_count"],
+                                                 stat["replied_count"], stat["low_rating_replied_count"]))
+                        else:
+                            raise ValueError("invalid comparison export")
+                        self.send_bytes(output.getvalue().encode("utf-8-sig"), "text/csv; charset=utf-8",
+                                        f"attachment; filename={kind}_comparison.csv")
                 elif parsed.path in {"/api/periods", "/export-periods.csv"}:
                     grain = params.get("grain", ["month"])[0]
                     with closing(connect(db_path)) as con:

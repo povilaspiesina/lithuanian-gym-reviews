@@ -11,7 +11,11 @@ let savedPrompts = [];
 let activeView = 'overview';
 let cancelAnalysis = false;
 let comparisonRequest = 0;
+let overviewRequest = 0;
 let comparisonData = null, selectedComparisonIndex = null;
+const chainNames = [...new Set(clubs.map(club => club.chain))].sort();
+let selectedScopes = new Set(chainNames.map(chain => `chain:${chain}`));
+let showCombined = false;
 const aiPresets = {
   issues: {mode:'issues', prompt:'Identify up to five distinct recurring problems. For each, explain the customer experience in plain English and cite one or two specific comments using their [R#] references. Merge overlapping themes. Distinguish repeated reports from isolated ones and make no claims beyond these comments.'},
   actions: {mode:'issues', prompt:'Recommend up to three practical gym improvements supported by these comments. For each, state the customer problem, a concrete action, and a specific comment with its [R#] reference. Do not repeat the same issue under different headings. Say when evidence is sparse.'},
@@ -98,15 +102,18 @@ async function deletePrompt() {
 
 function filterFields(includePeriod = true) {
   const choices = (items, label) => `<option value="">All ${label}</option>` + items.map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join('');
-  const chains = [...new Set(clubs.map(c => c.chain))].sort();
   const cities = [...new Set(clubs.map(c => c.locality))].sort();
   return `
     ${includePeriod ? `<div class="filter-time"><label>Period<select name="period"><option value="all">All time</option><option value="last_30_days">Last 30 days</option><option value="previous_month">Previous month</option><option value="custom">Custom dates</option></select></label>
       <div class="date-slot"><div class="date-fields" aria-hidden="true"><label>From<input type="date" name="start" disabled></label><label>To<input type="date" name="end" disabled></label></div><p class="date-hint">Choose Custom dates to set a range.</p></div></div>` : ''}
+    <div class="scope-picker"><div class="scope-head"><strong>Compare gyms</strong><span class="scope-status"></span></div>
+      <div class="scope-actions"><button type="button" data-scopes-action="all">All chains</button><button type="button" data-scopes-action="clear">Clear selection</button></div>
+      <div class="scope-chains">${chainNames.map(chain => `<label class="scope-chip"><input type="checkbox" data-scope="chain:${esc(chain)}"> ${esc(chain)}</label>`).join('')}</div>
+      <details class="scope-clubs"><summary>Choose individual clubs</summary><input type="search" class="club-search" placeholder="Find a club or city" aria-label="Find a club or city"><div class="club-options">${clubs.filter(club => club.status === 'open').map(club => `<label class="club-option" data-search="${esc(`${club.chain} ${club.club_name} ${club.locality}`.toLowerCase())}"><input type="checkbox" data-scope="club:${esc(club.id)}"><span>${esc(club.chain)} · ${esc(club.club_name)}<small>${esc(club.locality)}</small></span></label>`).join('')}</div></details>
+      <label class="combined-option"><input type="checkbox" data-combined> Add combined selection <span>(each review counted once; rating weighted by reviews)</span></label>
+    </div>
     <div class="filter-main">
-    <label>Chain<select name="chain">${choices(chains, 'chains')}</select></label>
     <label>City<select name="city">${choices(cities, 'cities')}</select></label>
-    <label>Club<select name="club_id"><option value="">All clubs</option>${clubs.map(c => `<option value="${esc(c.id)}">${esc(c.chain)} · ${esc(c.club_name)} · ${esc(c.locality)}</option>`).join('')}</select></label>
     <label>Stars<select name="rating"><option value="">All ratings</option>${[1,2,3,4,5].map(n => `<option value="${n}">${n}</option>`).join('')}</select></label>
     <label>Written comment<select name="comment"><option value="all">All reviews</option><option value="written">With comment</option><option value="rating_only">Rating only</option></select></label>
     <label>Owner reply<select name="reply"><option value="all">All reviews</option><option value="replied">With reply</option><option value="unreplied">Without reply</option></select></label>
@@ -120,14 +127,16 @@ function tomorrowLocal() {
   return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
 }
 
-function reconcileLocation(form, changed) {
-  const club = byId.get(form.elements.club_id.value);
-  if (changed === 'club_id' && club) {
-    form.elements.chain.value = club.chain;
-    form.elements.city.value = club.locality;
-  } else if (club && (form.elements.chain.value !== club.chain ||
-      form.elements.city.value !== club.locality)) {
-    form.elements.club_id.value = '';
+function renderScopeSelections() {
+  if (selectedScopes.size < 2) showCombined = false;
+  for (const id of filterIds) {
+    const form = document.getElementById(id);
+    for (const checkbox of form.querySelectorAll('[data-scope]')) checkbox.checked = selectedScopes.has(checkbox.dataset.scope);
+    form.querySelector('[data-combined]').checked = showCombined;
+    form.querySelector('[data-combined]').disabled = selectedScopes.size < 2;
+    const chains = [...selectedScopes].filter(scope => scope.startsWith('chain:')).length;
+    const clubs = selectedScopes.size - chains;
+    form.querySelector('.scope-status').textContent = `${chains} chain${chains === 1 ? '' : 's'} · ${clubs} club${clubs === 1 ? '' : 's'} selected`;
   }
 }
 
@@ -149,8 +158,38 @@ for (const id of filterIds) {
     form.querySelector('.date-fields').setAttribute('aria-hidden', String(!active));
   };
   form.updateDateFields = updateDateFields;
-  form.addEventListener('change', event => { reconcileLocation(form, event.target.name); updateDateFields(); syncFilters(form); });
-  form.addEventListener('input', () => syncFilters(form));
+  form.addEventListener('change', event => {
+    const scopeChanged = !!event.target.dataset.scope || event.target.hasAttribute('data-combined');
+    if (event.target.dataset.scope) {
+      if (event.target.checked) selectedScopes.add(event.target.dataset.scope);
+      else selectedScopes.delete(event.target.dataset.scope);
+      renderScopeSelections();
+    } else if (event.target.hasAttribute('data-combined')) {
+      showCombined = event.target.checked;
+      renderScopeSelections();
+    }
+    updateDateFields(); syncFilters(form);
+    if (scopeChanged) {
+      if (activeView === 'overview') loadOverview();
+      else if (activeView === 'trends') loadPeriodComparison();
+      else if (activeView === 'reviews') { reviewOffset = 0; loadReviews(); }
+    }
+  });
+  form.addEventListener('click', event => {
+    const action = event.target.closest('[data-scopes-action]')?.dataset.scopesAction;
+    if (!action) return;
+    selectedScopes = action === 'all' ? new Set(chainNames.map(chain => `chain:${chain}`)) : new Set();
+    renderScopeSelections();
+    if (activeView === 'overview') loadOverview();
+    else if (activeView === 'trends') loadPeriodComparison();
+    else if (activeView === 'reviews') { reviewOffset = 0; loadReviews(); }
+  });
+  form.addEventListener('input', event => {
+    if (event.target.matches('.club-search')) {
+      const search = event.target.value.trim().toLowerCase();
+      for (const option of form.querySelectorAll('.club-option')) option.hidden = !option.dataset.search.includes(search);
+    } else if (!event.target.matches('[data-scope],[data-combined]')) syncFilters(form);
+  });
   updateDateFields();
   form.onsubmit = event => {
     event.preventDefault();
@@ -161,12 +200,13 @@ for (const id of filterIds) {
     else { reviewOffset = 0; loadReviews(); }
   };
 }
+renderScopeSelections();
 
 function syncFilters(source) {
   for (const id of filterIds) {
     if (id === source.id) continue;
     const destination = document.getElementById(id);
-    for (const name of ['period','start','end','chain','city','club_id','rating','comment','reply','q']) {
+    for (const name of ['period','start','end','city','rating','comment','reply','q']) {
       if (source.elements[name] && destination.elements[name]) destination.elements[name].value = source.elements[name].value;
     }
     destination.updateDateFields();
@@ -177,6 +217,9 @@ function query(form) {
   const params = new URLSearchParams(new FormData(form));
   if (params.get('period') !== 'custom') { params.delete('start'); params.delete('end'); }
   for (const [key, value] of [...params]) if (!value) params.delete(key);
+  for (const scope of selectedScopes) params.append('scope', scope);
+  if (!selectedScopes.size) params.append('scope','none');
+  if (showCombined) params.set('combined','1');
   return params;
 }
 
@@ -316,35 +359,43 @@ window.addEventListener('message', event => {
   if (event.data.ok) loadCollection();
 });
 
+function seriesColor(index, key) {
+  return key === 'combined' ? '#263f48' : `hsl(${Math.round((index * 137.5 + 175) % 360)} 64% 38%)`;
+}
+function seriesLegend(series) {
+  return `<div class="series-legend">${series.map((item,index) => `<span><i style="background:${seriesColor(index,item.key)}"></i>${esc(item.label)}</span>`).join('')}</div>`;
+}
+function seriesLineChart(target, series, rowsFor, key, maximum, unit) {
+  const periods = [...new Set(series.flatMap(item => rowsFor(item).map(row => row.period)))].sort();
+  if (!periods.length) { $(target).innerHTML = '<p class="muted">No reviews in this selection.</p>'; return; }
+  const width = 720, height = 250, left = 45, right = 22, top = 16, bottom = 42;
+  const plotW = width-left-right, plotH = height-top-bottom;
+  const x = index => left + (periods.length === 1 ? plotW/2 : plotW*index/(periods.length-1));
+  const largest = maximum || Math.max(1,...series.flatMap(item => rowsFor(item).map(row => row[key] || 0))) * 1.1;
+  const y = value => top + plotH*(1-value/largest);
+  const grid = [0,.5,1].map(f => `<line class="gridline" x1="${left}" x2="${width-right}" y1="${y(largest*f)}" y2="${y(largest*f)}"/><text class="axis" x="${left-6}" y="${y(largest*f)+4}" text-anchor="end">${maximum ? Math.round(largest*f)+unit : Math.round(largest*f)}</text>`).join('');
+  const ticks = [...new Set([0,Math.floor((periods.length-1)/2),periods.length-1])].map(i => `<text class="axis" x="${x(i)}" y="${height-9}" text-anchor="${i===0?'start':i===periods.length-1?'end':'middle'}">${esc(periods[i])}</text>`).join('');
+  const paths = series.map((item,seriesIndex) => {
+    const color = seriesColor(seriesIndex,item.key), rowMap = new Map(rowsFor(item).map(row => [row.period,row]));
+    const points = periods.flatMap((period,index) => { const row=rowMap.get(period); return row?.[key] == null ? [] : [`${x(index)},${y(row[key])}`]; });
+    const line = points.length > 1 ? `<polyline fill="none" stroke="${color}" stroke-width="3" ${item.key==='combined'?'stroke-dasharray="7 5"':''} points="${points.join(' ')}"/>` : '';
+    const dots = periods.map((period,index) => { const row=rowMap.get(period); if (row?.[key] == null) return ''; const value = key==='count'?fmt(row[key]):Number(row[key]).toFixed(2)+unit; return `<circle cx="${x(index)}" cy="${y(row[key])}" r="5" fill="${color}" stroke="white" stroke-width="2" tabindex="0" ${target.startsWith('#compare-') ? `data-period-index="${index}"` : ''} data-tip="${esc(`${item.label} · ${period}: ${value} (${fmt(row.count)} reviews)`)}"><title>${esc(`${item.label}: ${value}`)}</title></circle>`; }).join('');
+    return line+dots;
+  }).join('');
+  $(target).innerHTML = seriesLegend(series)+`<svg class="plot" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(key.replaceAll('_',' '))} by gym and period">${grid}${paths}${ticks}</svg>`;
+}
 function renderOverview(data) {
-  const s = data.stats, count = s.review_count;
-  $('#count').textContent = fmt(count); $('#average').textContent = s.average_rating ?? '—';
-  $('#written').textContent = fmt(s.written_count); $('#written-pct').textContent = `${pct(s.written_count,count)} of reviews`;
-  $('#low').textContent = fmt(s.low_rating_count); $('#low-pct').textContent = `${pct(s.low_rating_count,count)} of reviews`;
-  $('#replied').textContent = fmt(s.replied_count); $('#reply-pct').textContent = `${pct(s.replied_count,count)} of reviews`;
-  $('#low-reply').textContent = pct(s.low_rating_replied_count,s.low_rating_count);
-  const metricTips = {
-    count:`${fmt(count)} matching reviews in this selection`,
-    average:`${s.average_rating ?? 'No rating'} ★ average from ${fmt(count)} reviews`,
-    written:`${fmt(s.written_count)} written comments out of ${fmt(count)} reviews (${pct(s.written_count,count)})`,
-    low:`${fmt(s.low_rating_count)} reviews with 1 or 2 stars (${pct(s.low_rating_count,count)})`,
-    replied:`${fmt(s.replied_count)} reviews have an owner reply (${pct(s.replied_count,count)})`,
-    'low-reply':`${fmt(s.low_rating_replied_count)} of ${fmt(s.low_rating_count)} low-star reviews have an owner reply`,
-  };
-  for (const [id, detail] of Object.entries(metricTips)) {
-    const card = $('#' + id).closest('.metric');
-    card.dataset.tip = detail;
-    card.tabIndex = 0;
-  }
+  const series = data.series || [];
   renderCoverage(data.coverage);
-  $('#distribution').innerHTML = [5,4,3,2,1].map(n => `<button type="button" class="distribution-row" data-rating="${n}" data-tip="${n} stars: ${fmt(s.ratings[n])} reviews (${pct(s.ratings[n],count)})"><span>${n} ★</span><span class="bar-track"><span class="bar-fill" style="width:${count ? 100*s.ratings[n]/count : 0}%"></span></span><span>${fmt(s.ratings[n])}</span></button>`).join('');
-  $('#trend-note').textContent = `${{day:'Daily',month:'Monthly',year:'Yearly'}[data.charts.grain]} totals · some review dates may be estimated`;
-  renderPlot('#trend', data.charts.trend, 'count');
-  renderPlot('#rating-trend', data.charts.trend, 'average_rating');
-  $('#chains').innerHTML = data.charts.chains.length ? data.charts.chains.map(row => `<button type="button" class="compare-row" data-chain="${esc(row.chain)}" data-tip="${esc(`${row.chain}: ${row.average_rating} ★ from ${fmt(row.count)} reviews`)}"><b>${esc(row.chain)}</b><span class="bar-track"><span class="bar-fill" style="width:${100*row.average_rating/5}%"></span></span><span>${row.average_rating.toFixed(2)} ★</span><span>${fmt(row.count)}</span></button>`).join('') : '<p class="muted">No reviews in this selection.</p>';
+  $('#overview-series-cards').innerHTML = series.length ? series.map((item,index) => { const s=item.stats,n=s.review_count,color=seriesColor(index,item.key); return `<section class="card entity-card" style="--entity-color:${color}" data-tip="${esc(`${item.label}: ${fmt(n)} reviews, ${s.average_rating ?? 'no'} average stars`)}" tabindex="0"><h3><i></i>${esc(item.label)}</h3><div class="entity-metrics"><div><small>Reviews</small><b>${fmt(n)}</b></div><div><small>Average ★</small><b>${s.average_rating == null?'—':Number(s.average_rating).toFixed(2)}</b></div><div><small>Written</small><b>${pct(s.written_count,n)}</b></div><div><small>1–2 ★</small><b>${pct(s.low_rating_count,n)}</b></div><div><small>Owner replies</small><b>${pct(s.replied_count,n)}</b></div><div><small>Replies to 1–2 ★</small><b>${pct(s.low_rating_replied_count,s.low_rating_count)}</b></div></div></section>`; }).join('') : '<p class="muted">Tick at least one chain or club to compare.</p>';
+  $('#distribution').innerHTML = series.length ? series.map((item,index) => { const s=item.stats,n=s.review_count; return `<div class="distribution-group"><b style="color:${seriesColor(index,item.key)}">${esc(item.label)} · ${fmt(n)} reviews</b>${[5,4,3,2,1].map(star => {const value=s.ratings[String(star)]||0; return `<button type="button" class="distribution-row" data-rating="${star}" data-tip="${esc(`${item.label}: ${star} stars, ${fmt(value)} reviews (${pct(value,n)})`)}"><span>${star} ★</span><span class="bar-track"><span class="bar-fill" style="width:${n?100*value/n:0}%;background:${seriesColor(index,item.key)}"></span></span><span>${fmt(value)}</span></button>`;}).join('')}</div>`; }).join('') : '<p class="muted">No selected gyms.</p>';
+  $('#trend-note').textContent = `${{day:'Daily',month:'Monthly',year:'Yearly'}[data.grain] || 'Monthly'} totals · some review dates may be estimated`;
+  seriesLineChart('#trend',series,item=>item.trend,'count',0,'');
+  seriesLineChart('#rating-trend',series,item=>item.trend,'average_rating',5,' ★');
+  $('#chains').innerHTML = series.length ? series.map((item,index) => { const s=item.stats, avg=s.average_rating; return `<div class="compare-row" data-tip="${esc(`${item.label}: ${avg ?? 'no'} ★ from ${fmt(s.review_count)} reviews`)}"><b>${esc(item.label)}</b><span class="bar-track"><span class="bar-fill" style="width:${avg?100*avg/5:0}%;background:${seriesColor(index,item.key)}"></span></span><span>${avg == null?'—':Number(avg).toFixed(2)+' ★'}</span><span>${fmt(s.review_count)}</span></div>`; }).join('') : '<p class="muted">No selected gyms.</p>';
   renderClubTable();
-  const suffix = query($('#overview-filters')).toString();
-  for (const link of document.querySelectorAll('[data-export]')) link.href = `/export-chart.csv?kind=${link.dataset.export}&${suffix}`;
+  const suffix=query($('#overview-filters')).toString();
+  for (const link of document.querySelectorAll('[data-export]')) if (link.dataset.export !== 'clubs') link.href=`/export-series.csv?mode=overview&kind=${link.dataset.export}&${suffix}`;
 }
 
 function comparisonParams() {
@@ -359,73 +410,29 @@ function difference(current, previous, suffix, betterDirection) {
   const symbol = delta > 0.005 ? '↑' : delta < -0.005 ? '↓' : '→';
   return `<span class="period-delta ${good ? 'improved' : bad ? 'declined' : ''}">${symbol} ${Math.abs(delta).toFixed(suffix === '★' ? 2 : suffix === 'reviews' ? 0 : 1)} ${suffix}</span>`;
 }
-function trendChart(target, rows, key, maximum, unit, bars = false) {
-  const width = 510, height = 225, left = 38, right = 18, top = 22, bottom = 37;
-  const plotW = width - left - right, plotH = height - top - bottom;
-  const x = index => left + (rows.length === 1 ? plotW / 2 : plotW * index / (rows.length - 1));
-  const scale = bars ? Math.max(1, ...rows.map(row => row[key] || 0)) * 1.12 : maximum;
-  const y = value => top + plotH * (1 - value / scale);
-  const grid = [0,.5,1].map(fraction => `<line class="gridline" x1="${left}" x2="${width-right}" y1="${y(scale*fraction)}" y2="${y(scale*fraction)}"/><text class="axis" x="${left-5}" y="${y(scale*fraction)+4}" text-anchor="end">${bars ? Math.round(scale*fraction) : Math.round(scale*fraction) + unit}</text>`).join('');
-  const labels = [...new Set([0, Math.floor((rows.length-1)/2), rows.length-1])].map(index => `<text class="axis" x="${x(index)}" y="${height-8}" text-anchor="${index === 0 ? 'start' : index === rows.length-1 ? 'end' : 'middle'}">${esc(rows[index].period)}</text>`).join('');
-  let marks;
-  if (bars) {
-    const barWidth = Math.min(30, plotW / rows.length * .65);
-    marks = rows.map((row,index) => `<rect class="trend-bar ${index === selectedComparisonIndex ? 'selected' : ''}" tabindex="0" role="button" aria-label="${esc(`${row.period}: ${fmt(row[key])} reviews`)}" data-period-index="${index}" data-tip="${esc(`${row.period}: ${fmt(row[key])} reviews`)}" x="${x(index)-barWidth/2}" y="${y(row[key])}" width="${barWidth}" height="${Math.max(1,top+plotH-y(row[key]))}"/>`).join('');
-  } else {
-    const points = rows.flatMap((row,index) => row[key] == null ? [] : [`${x(index)},${y(row[key])}`]);
-    marks = (points.length > 1 ? `<polyline class="trend-line compare-line" points="${points.join(' ')}"/>` : '') +
-      rows.map((row,index) => row[key] == null ? '' : `<circle class="plot-dot compare-dot ${index === selectedComparisonIndex ? 'selected' : ''}" tabindex="0" role="button" aria-label="${esc(`${row.period}: ${row[key]} ${unit} from ${fmt(row.count)} reviews`)}" data-period-index="${index}" data-tip="${esc(`${row.period}: ${row[key]} ${unit} from ${fmt(row.count)} reviews`)}" cx="${x(index)}" cy="${y(row[key])}" r="6"/>`).join('');
-  }
-  $(target).innerHTML = `<svg class="plot" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(key.replaceAll('_',' '))} by period">${grid}${marks}${labels}</svg>`;
-}
-function trendKpi(label, value, change, state, detail) {
-  return `<div class="card trend-kpi ${state}" data-tip="${esc(detail)}" tabindex="0"><span>${esc(label)}</span><b>${esc(value)}</b><strong>${esc(change)}</strong></div>`;
-}
 function renderPeriodComparison(data) {
-  const rows = data.rows;
-  if (selectedComparisonIndex == null || selectedComparisonIndex >= rows.length) selectedComparisonIndex = rows.length - 1;
-  $('#period-rows').innerHTML = rows.map((row, index) => {
-    const previous = rows[index - 1];
-    return `<tr class="${index === selectedComparisonIndex ? 'selected-period' : ''}" tabindex="0" data-period-index="${index}" aria-label="Inspect ${esc(row.period)}"><td>${esc(row.period)}</td><td>${fmt(row.count)}</td><td>${previous?.count ? difference(row.count, previous.count, 'reviews', 0) : '—'}</td><td>${row.average_rating == null ? '—' : row.average_rating.toFixed(2)}</td><td>${previous?.count ? difference(row.average_rating, previous.average_rating, '★', 1) : '—'}</td><td>${row.low_pct == null ? '—' : row.low_pct.toFixed(1) + '%'}</td><td>${previous?.count ? difference(row.low_pct, previous.low_pct, 'pp', -1) : '—'}</td><td>${row.reply_pct == null ? '—' : row.reply_pct.toFixed(1) + '%'}</td><td>${previous?.count ? difference(row.reply_pct, previous.reply_pct, 'pp', 1) : '—'}</td></tr>`;
-  }).join('');
-  const latest = rows[selectedComparisonIndex], previous = rows[selectedComparisonIndex - 1];
-  let summary = latest ? `${esc(latest.period)} has ${fmt(latest.count)} reviews. Select another period to inspect its change.` : 'No completed periods are available.';
-  if (latest?.count && previous?.count) {
-    const rating = latest.average_rating - previous.average_rating;
-    const low = latest.low_pct - previous.low_pct;
-    const direction = rating > 0.05 && low < -0.5 ? 'Ratings and low-star share both improved' :
-      rating < -0.05 && low > 0.5 ? 'Ratings and low-star share both worsened' : 'The signals are mixed or nearly unchanged';
-    summary = `<strong>${direction}</strong> from ${esc(previous.period)} to ${esc(latest.period)}. Average ${difference(latest.average_rating, previous.average_rating, '★', 1)}; 1–2 ★ share ${difference(latest.low_pct, previous.low_pct, 'pp', -1)}. ${fmt(previous.count)} → ${fmt(latest.count)} reviews.${Math.min(latest.count, previous.count) < 20 ? ' Small review counts make this comparison less reliable.' : ''}`;
-  }
-  $('#period-summary').innerHTML = summary;
-  const change = (value, prior, unit) => value == null || prior == null ? 'No comparison' : `${value >= prior ? '↑' : '↓'} ${Math.abs(value-prior).toFixed(unit === '★' ? 2 : unit === 'reviews' ? 0 : 1)} ${unit}`;
-  const state = (value, prior, better) => value == null || prior == null ? 'neutral' : (value-prior)*better > .005 ? 'improved' : (value-prior)*better < -.005 ? 'declined' : 'neutral';
-  $('#trend-kpis').innerHTML = latest ? [
-    trendKpi('Average rating', latest.average_rating == null ? '—' : `${latest.average_rating.toFixed(2)} ★`, change(latest.average_rating,previous?.average_rating,'★'),state(latest.average_rating,previous?.average_rating,1),`${latest.period}: ${fmt(latest.count)} reviews; preceding period: ${fmt(previous?.count || 0)} reviews`),
-    trendKpi('1–2 star share', latest.low_pct == null ? '—' : `${latest.low_pct.toFixed(1)}%`,change(latest.low_pct,previous?.low_pct,'pp'),state(latest.low_pct,previous?.low_pct,-1),`${latest.period}: low ratings among ${fmt(latest.count)} reviews`),
-    trendKpi('Review volume',fmt(latest.count),change(latest.count,previous?.count,'reviews'),'neutral',`${latest.period}: ${fmt(latest.count)} reviews; volume alone does not show quality`),
-    trendKpi('Owner reply rate',latest.reply_pct == null ? '—' : `${latest.reply_pct.toFixed(1)}%`,change(latest.reply_pct,previous?.reply_pct,'pp'),state(latest.reply_pct,previous?.reply_pct,1),`${latest.period}: replies to ${fmt(latest.count)} reviews`),
-  ].join('') : '';
-  trendChart('#compare-rating',rows,'average_rating',5,'★');
-  trendChart('#compare-low',rows,'low_pct',100,'%');
-  trendChart('#compare-volume',rows,'count',0,'',true);
-  trendChart('#compare-replies',rows,'reply_pct',100,'%');
+  const series=data.series || [];
+  const periods=[...new Set(series.flatMap(item=>item.rows.map(row=>row.period)))].sort();
+  if (selectedComparisonIndex == null || selectedComparisonIndex >= periods.length) selectedComparisonIndex=periods.length-1;
+  const current=periods[selectedComparisonIndex], prior=periods[selectedComparisonIndex-1];
+  $('#period-details-title').textContent=current ? `Period details · ${current}` : 'Period details';
+  $('#period-summary').textContent=current ? `${current} compared with ${prior || 'no preceding period'} · ${series.length} comparison series. Hover a point for exact values and click to inspect another period. Small samples can make changes look dramatic.` : 'No completed periods are available for the selected gyms.';
+  const rows=series.map((item,index)=>{ const now=item.rows.find(row=>row.period===current), prev=item.rows.find(row=>row.period===prior); return {item,index,now,prev}; });
+  const value=(row,key,suffix='')=>row?.[key]==null?'—':key==='count'?fmt(row[key]):Number(row[key]).toFixed(key==='average_rating'?2:1)+suffix;
+  $('#period-rows').innerHTML=rows.map(({item,index,now,prev})=>`<tr><td><span class="series-swatch" style="background:${seriesColor(index,item.key)}"></span>${esc(item.label)}</td><td>${value(now,'count')}</td><td>${now&&prev?difference(now.count,prev.count,'reviews',0):'—'}</td><td>${value(now,'average_rating')}</td><td>${now&&prev?difference(now.average_rating,prev.average_rating,'★',1):'—'}</td><td>${value(now,'low_pct','%')}</td><td>${now&&prev?difference(now.low_pct,prev.low_pct,'pp',-1):'—'}</td><td>${value(now,'reply_pct','%')}</td><td>${now&&prev?difference(now.reply_pct,prev.reply_pct,'pp',1):'—'}</td></tr>`).join('') || '<tr><td colspan="9">No data for selected gyms.</td></tr>';
+  $('#trend-kpis').innerHTML=rows.map(({item,index,now,prev})=>`<div class="card trend-entity" style="--entity-color:${seriesColor(index,item.key)}" data-tip="${esc(`${item.label}: ${fmt(now?.count||0)} reviews in ${current||'this period'}`)}" tabindex="0"><h3><i></i>${esc(item.label)}</h3><div class="trend-entity-metrics"><div><small>Average ★</small><b>${value(now,'average_rating')}</b><span>${now&&prev?difference(now.average_rating,prev.average_rating,'★',1):'—'}</span></div><div><small>1–2 ★</small><b>${value(now,'low_pct','%')}</b><span>${now&&prev?difference(now.low_pct,prev.low_pct,'pp',-1):'—'}</span></div><div><small>Reviews</small><b>${value(now,'count')}</b><span>${now&&prev?difference(now.count,prev.count,'reviews',0):'—'}</span></div><div><small>Owner replies</small><b>${value(now,'reply_pct','%')}</b><span>${now&&prev?difference(now.reply_pct,prev.reply_pct,'pp',1):'—'}</span></div></div></div>`).join('');
+  for (const [target,key,max,unit] of [['#compare-rating','average_rating',5,' ★'],['#compare-low','low_pct',100,'%'],['#compare-volume','count',0,''],['#compare-replies','reply_pct',100,'%']]) seriesLineChart(target,series,item=>item.rows,key,max,unit);
 }
 async function loadPeriodComparison() {
-  const request = ++comparisonRequest;
-  const params = comparisonParams();
-  $('#period-export').href = '/export-periods.csv?' + params;
-  $('#period-summary').textContent = 'Loading period comparison…';
-  try {
-    const response = await fetch('/api/periods?' + params);
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || 'Could not load period comparison');
-    if (request === comparisonRequest) { comparisonData = result; selectedComparisonIndex = null; renderPeriodComparison(result); }
-  } catch (error) { if (request === comparisonRequest) $('#period-summary').textContent = error.message; }
+  const request=++comparisonRequest, params=comparisonParams();
+  $('#period-export').href='/export-series.csv?mode=periods&'+params;
+  $('#period-summary').textContent='Loading period comparison…';
+  try { const response=await fetch('/api/series?mode=periods&'+params); const result=await response.json(); if (!response.ok) throw new Error(result.error||'Could not load period comparison'); if (request===comparisonRequest) {comparisonData=result;selectedComparisonIndex=null;renderPeriodComparison(result);} }
+  catch(error) {if(request===comparisonRequest) $('#period-summary').textContent=error.message;}
 }
 
 function sortedClubRows() {
-  const rows = [...(overviewData?.charts.clubs || [])];
+  const rows = [...(overviewData?.clubs || [])];
   rows.sort((a,b) => {
     let delta;
     if (sortKey === 'name') delta = `${a.chain} ${a.club_name}`.localeCompare(`${b.chain} ${b.club_name}`);
@@ -465,8 +472,9 @@ async function fetchData(form, offset = 0) {
 }
 async function loadOverview() {
   if (!$('#overview-filters').reportValidity()) return;
-  try { overviewData = await fetchData($('#overview-filters')); renderOverview(overviewData); }
-  catch (error) { alert(error.message); }
+  const request = ++overviewRequest;
+  try { const response=await fetch('/api/series?mode=overview&'+query($('#overview-filters'))); const result=await response.json(); if(!response.ok) throw new Error(result.error||'Could not load overview'); if(request===overviewRequest){overviewData=result;renderOverview(result);} }
+  catch (error) { if(request===overviewRequest) alert(error.message); }
 }
 
 function renderReviews(data) {
@@ -659,8 +667,6 @@ setInterval(() => { if (!$('#collection-view').hidden) loadCollection(); }, 5000
 document.addEventListener('click', event => {
   const rating = event.target.closest('[data-rating]');
   if (rating) { $('#overview-filters').elements.rating.value = rating.dataset.rating; syncFilters($('#overview-filters')); loadOverview(); }
-  const chain = event.target.closest('[data-chain]');
-  if (chain) { $('#overview-filters').elements.chain.value = chain.dataset.chain; reconcileLocation($('#overview-filters'),'chain'); syncFilters($('#overview-filters')); loadOverview(); }
 });
 document.querySelectorAll('[data-sort]').forEach(button => button.onclick = () => {
   const next = button.dataset.sort;
